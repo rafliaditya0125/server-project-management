@@ -1,4 +1,4 @@
-# Script Automasi
+# Script Automasi Project Management pada Server
 project.sh merupakan script untuk automasi konsep isolasi user dalam arsitektur app server
 ## Daftar Opsi Command
 script ini ada beberapa opsi command, yaitu:
