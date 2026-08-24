@@ -18,9 +18,9 @@ script ini ada beberapa opsi command, yaitu:
             1. Laravel (PHP-FPM)
             2. Node.js (Fullstack / Static FE + API BE)
             3. Node.js (Standalone API Only - Direct Node Runtime)
-    ), link repositori git (Opsional), meminta port jika pilih stack 3
+    ), link repositori git (Opsional), meminta port jika pilih stack 1 dan 3
     - Jika pilih stack 1 atau 2
-        - Minta input port fe lalu minta port be.
+        - Minta input port fe lalu minta port be(Jika pilih stack 2).
         - ada pilihan web server:
             1. Caddy (Ringkas & zero-temp folder)
             2. Nginx (User-space instance)

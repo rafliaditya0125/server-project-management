@@ -249,35 +249,16 @@ cmd_create() {
     local webserver_choice=""
     local webserver_name="None"
 
-    if [[ "$stack_choice" == "3" ]]; then
+    if [[ "$stack_choice" == "1" ]]; then
+        # Laravel (PHP-FPM) - Hanya meminta 1 Port Web/HTTP
         while true; do
-            read -rp "Masukkan Port Aplikasi (misal: 3000): " port_single
-            if [[ "$port_single" =~ ^[0-9]+$ ]] && [ "$port_single" -ge 1 ] && [ "$port_single" -le 65535 ]; then
+            read -rp "Masukkan Port Web / HTTP Aplikasi (misal: 8080): " port_fe
+            if [[ "$port_fe" =~ ^[0-9]+$ ]] && [ "$port_fe" -ge 1 ] && [ "$port_fe" -le 65535 ]; then
+                port_single="$port_fe"
+                port_be="9000" # Default PHP-FPM local port
                 break
             else
                 log_error "Port harus berupa angka antara 1 dan 65535."
-            fi
-        done
-    else
-        while true; do
-            read -rp "Masukkan Port Frontend (misal: 8080): " port_fe
-            if [[ "$port_fe" =~ ^[0-9]+$ ]] && [ "$port_fe" -ge 1 ] && [ "$port_fe" -le 65535 ]; then
-                break
-            else
-                log_error "Port Frontend harus berupa angka antara 1 dan 65535."
-            fi
-        done
-
-        while true; do
-            read -rp "Masukkan Port Backend (misal: 9000 untuk PHP-FPM / 3001 untuk API): " port_be
-            if [[ "$port_be" =~ ^[0-9]+$ ]] && [ "$port_be" -ge 1 ] && [ "$port_be" -le 65535 ]; then
-                if [[ "$port_be" == "$port_fe" ]]; then
-                    log_error "Port Backend tidak boleh sama dengan Port Frontend."
-                else
-                    break
-                fi
-            else
-                log_error "Port Backend harus berupa angka antara 1 dan 65535."
             fi
         done
 
@@ -291,6 +272,53 @@ cmd_create() {
                 2) webserver_name="nginx"; break ;;
                 *) log_error "Pilihan tidak valid. Masukkan 1 atau 2." ;;
             esac
+        done
+
+    elif [[ "$stack_choice" == "2" ]]; then
+        # Node.js (Fullstack / Static FE + API BE) - Meminta Port FE dan Port BE
+        while true; do
+            read -rp "Masukkan Port Frontend (misal: 8080): " port_fe
+            if [[ "$port_fe" =~ ^[0-9]+$ ]] && [ "$port_fe" -ge 1 ] && [ "$port_fe" -le 65535 ]; then
+                break
+            else
+                log_error "Port Frontend harus berupa angka antara 1 dan 65535."
+            fi
+        done
+
+        while true; do
+            read -rp "Masukkan Port Backend API (misal: 3001): " port_be
+            if [[ "$port_be" =~ ^[0-9]+$ ]] && [ "$port_be" -ge 1 ] && [ "$port_be" -le 65535 ]; then
+                if [[ "$port_be" == "$port_fe" ]]; then
+                    log_error "Port Backend API tidak boleh sama dengan Port Frontend."
+                else
+                    break
+                fi
+            else
+                log_error "Port Backend API harus berupa angka antara 1 dan 65535."
+            fi
+        done
+
+        echo -e "\nPilih Web Server:"
+        echo -e "  1. Caddy (Ringkas & zero-temp folder)"
+        echo -e "  2. Nginx (User-space instance)"
+        while true; do
+            read -rp "Pilihan Web Server (1/2): " webserver_choice
+            case "$webserver_choice" in
+                1) webserver_name="caddy"; break ;;
+                2) webserver_name="nginx"; break ;;
+                *) log_error "Pilihan tidak valid. Masukkan 1 atau 2." ;;
+            esac
+        done
+
+    elif [[ "$stack_choice" == "3" ]]; then
+        # Node.js (Standalone API Only - Direct Node Runtime) - Meminta 1 Port Runtime
+        while true; do
+            read -rp "Masukkan Port Aplikasi (misal: 3000): " port_single
+            if [[ "$port_single" =~ ^[0-9]+$ ]] && [ "$port_single" -ge 1 ] && [ "$port_single" -le 65535 ]; then
+                break
+            else
+                log_error "Port harus berupa angka antara 1 dan 65535."
+            fi
         done
     fi
 
@@ -687,12 +715,15 @@ EOF
     echo -e "  - Username / App : ${BOLD}${app_name}${NC}"
     echo -e "  - Home Directory : ${home_dir}"
     echo -e "  - Stack          : ${stack_name}"
-    if [[ "$stack_choice" == "3" ]]; then
-        echo -e "  - Port Aplikasi  : ${BOLD}${port_single}${NC}"
-    else
+    if [[ "$stack_choice" == "1" ]]; then
+        echo -e "  - Web Server     : ${webserver_name}"
+        echo -e "  - Port Web/HTTP  : ${BOLD}${port_fe}${NC}"
+    elif [[ "$stack_choice" == "2" ]]; then
         echo -e "  - Web Server     : ${webserver_name}"
         echo -e "  - Port Frontend  : ${BOLD}${port_fe}${NC}"
         echo -e "  - Port Backend   : ${BOLD}${port_be}${NC}"
+    elif [[ "$stack_choice" == "3" ]]; then
+        echo -e "  - Port Aplikasi  : ${BOLD}${port_single}${NC}"
     fi
     echo -e "  - Database Name  : ${db_name}"
     echo -e "  - Database User  : ${db_user}"
@@ -842,7 +873,16 @@ cmd_list() {
                 }
             } catch (e) {}
 
-            const ports = app.port !== 'N/A' ? app.port : \`\${app.port_fe}/\${app.port_be}\`;
+            let ports = '-';
+            if (app.stack === 'laravel') {
+                ports = app.port_fe !== 'N/A' ? app.port_fe : (app.port || '-');
+            } else if (app.stack === 'node-fullstack') {
+                ports = \`\${app.port_fe}/\${app.port_be}\`;
+            } else if (app.stack === 'node-api') {
+                ports = app.port !== 'N/A' ? app.port : '-';
+            } else {
+                ports = app.port !== 'N/A' ? app.port : \`\${app.port_fe}/\${app.port_be}\`;
+            }
             const dbInfo = \`\${app.db_name || '-'} / \${app.db_user || '-'}\`;
             const statusFormatted = status === 'ACTIVE' ? '\x1b[32mACTIVE\x1b[0m' : '\x1b[31mINACTIVE\x1b[0m';
 
