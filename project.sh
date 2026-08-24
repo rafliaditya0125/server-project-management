@@ -47,6 +47,23 @@ check_root() {
     fi
 }
 
+cleanup_aborted_app() {
+    local target_app="$1"
+    if [ -n "$target_app" ]; then
+        log_warn "Membersihkan resource yang sempat terbuat untuk '$target_app'..."
+        run_systemctl_user "$target_app" "stop" "${target_app}.service" 2>/dev/null || true
+        run_systemctl_user "$target_app" "disable" "${target_app}.service" 2>/dev/null || true
+        loginctl disable-linger "$target_app" 2>/dev/null || true
+        pkill -u "$target_app" 2>/dev/null || true
+        if id "$target_app" &>/dev/null; then
+            userdel -r "$target_app" 2>/dev/null || userdel -f "$target_app" 2>/dev/null || true
+        fi
+        if [ -d "${APPS_BASE_DIR}/${target_app}" ]; then
+            rm -rf "${APPS_BASE_DIR}/${target_app}"
+        fi
+    fi
+}
+
 init_registry() {
     if [ ! -d "$REGISTRY_DIR" ] && [ "$EUID" -eq 0 ]; then
         mkdir -p "$REGISTRY_DIR"
@@ -352,26 +369,7 @@ cmd_create() {
     read -rsp "Password Root Database: " db_root_pass
     echo
 
-    # 7. Memeriksa ketersediaan Shell Fish
-    local shell_path
-    shell_path="$(which fish 2>/dev/null || echo "/usr/bin/fish")"
-    if [ ! -x "$shell_path" ]; then
-        log_warn "Fish shell tidak ditemukan di $shell_path. Menggunakan /bin/bash sebagai cadangan."
-        shell_path="/bin/bash"
-    fi
-
-    log_info "Membuat user sistem '${app_name}'..."
-    # Buat user tanpa sudo dengan home di /home/apps/<nama-aplikasi>
-    useradd -m -d "${APPS_BASE_DIR}/${app_name}" -s "$shell_path" "$app_name"
-    echo "${app_name}:${user_password}" | chpasswd
-    log_success "User '${app_name}' berhasil dibuat dengan shell '${shell_path}'."
-
-    # Pastikan linger aktif untuk user agar systemd user service tetap berjalan
-    log_info "Mengaktifkan linger untuk user '${app_name}'..."
-    loginctl enable-linger "$app_name" || log_warn "Gagal mengaktifkan linger secara otomatis via loginctl."
-
-    # 8. Eksekusi Pembuatan Database
-    log_info "Membuat database '${db_name}' dan user database '${db_user}'..."
+    # 7. Eksekusi Pembuatan Database Terlebih Dahulu (Abort jika gagal)
     local mysql_auth=(-u "$db_root_user")
     if [ -n "$db_root_pass" ]; then
         mysql_auth+=("-p${db_root_pass}")
@@ -383,45 +381,102 @@ cmd_create() {
     elif command -v mysql &>/dev/null; then
         mysql_cmd="mysql"
     else
-        log_warn "Binary mysql / mariadb client tidak ditemukan di PATH sistem. Lewati pembuatan query database otomatis."
+        log_error "Binary mysql / mariadb client tidak ditemukan di PATH sistem. Database tidak dapat dibuat."
+        log_error "Proses pembuatan aplikasi dibatalkan."
+        exit 1
     fi
 
-    if [ -n "$mysql_cmd" ]; then
-        local sql_query="
-            CREATE DATABASE IF NOT EXISTS \`${db_name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-            CREATE USER IF NOT EXISTS '${db_user}'@'localhost' IDENTIFIED BY '${db_password}';
-            CREATE USER IF NOT EXISTS '${db_user}'@'%' IDENTIFIED BY '${db_password}';
-            GRANT ALL PRIVILEGES ON \`${db_name}\`.* TO '${db_user}'@'localhost';
-            GRANT ALL PRIVILEGES ON \`${db_name}\`.* TO '${db_user}'@'%';
-            FLUSH PRIVILEGES;
-        "
-        if ! "${mysql_cmd}" "${mysql_auth[@]}" -e "$sql_query" 2>/dev/null; then
-            # Coba alternatif via unix socket auth (sudo mysql)
-            if ! mysql -e "$sql_query" 2>/dev/null; then
-                log_error "Gagal membuat database/user MySQL dengan kredensial yang diberikan. Anda dapat membuatnya secara manual nanti."
-            else
-                log_success "Database '${db_name}' dan hak akses user '${db_user}' berhasil dibuat via socket root!"
-            fi
-        else
-            log_success "Database '${db_name}' dan user '${db_user}' berhasil dibuat!"
+    log_info "Memverifikasi koneksi root database..."
+    local root_test_err
+    if ! root_test_err=$("${mysql_cmd}" "${mysql_auth[@]}" -e "SELECT 1;" 2>&1); then
+        log_error "Gagal terhubung ke database sebagai root ('$db_root_user')."
+        echo -e "${RED}[Detail MySQL Error]:${NC} $root_test_err"
+        log_error "Proses pembuatan aplikasi dibatalkan."
+        exit 1
+    fi
+
+    log_info "Membuat database '${db_name}' dan user database '${db_user}'..."
+    local sql_query="
+        CREATE DATABASE IF NOT EXISTS \`${db_name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+        CREATE USER IF NOT EXISTS '${db_user}'@'localhost' IDENTIFIED BY '${db_password}';
+        CREATE USER IF NOT EXISTS '${db_user}'@'%' IDENTIFIED BY '${db_password}';
+        GRANT ALL PRIVILEGES ON \`${db_name}\`.* TO '${db_user}'@'localhost';
+        GRANT ALL PRIVILEGES ON \`${db_name}\`.* TO '${db_user}'@'%';
+        FLUSH PRIVILEGES;
+    "
+
+    local db_exec_err
+    if ! db_exec_err=$("${mysql_cmd}" "${mysql_auth[@]}" -e "$sql_query" 2>&1); then
+        log_error "Gagal membuat database '${db_name}' atau user '${db_user}'."
+        echo -e "${RED}[Detail MySQL Error]:${NC} $db_exec_err"
+        if echo "$db_exec_err" | grep -qiE "password.*policy|policy.*requirements|validate_password|password validation"; then
+            log_warn "Petunjuk: Password database untuk user '${db_user}' tidak memenuhi policy keamanan MySQL server (panjang, huruf besar/kecil, angka, simbol)."
         fi
+        log_error "Proses pembuatan aplikasi dibatalkan (abort)."
+        exit 1
+    fi
+    log_success "Database '${db_name}' dan hak akses user '${db_user}' berhasil dibuat!"
+
+    # 8. Memeriksa ketersediaan Shell Fish & Membuat User Sistem
+    local shell_path
+    shell_path="$(which fish 2>/dev/null || echo "/usr/bin/fish")"
+    if [ ! -x "$shell_path" ]; then
+        log_warn "Fish shell tidak ditemukan di $shell_path. Menggunakan /bin/bash sebagai cadangan."
+        shell_path="/bin/bash"
     fi
 
-    # 9. Setup Struktur Direktori & Konfigurasi Sesuai Stack
+    log_info "Membuat user sistem '${app_name}'..."
+    useradd -m -d "${APPS_BASE_DIR}/${app_name}" -s "$shell_path" "$app_name"
+    echo "${app_name}:${user_password}" | chpasswd
+    log_success "User '${app_name}' berhasil dibuat dengan shell '${shell_path}'."
+
+    log_info "Mengaktifkan linger untuk user '${app_name}'..."
+    loginctl enable-linger "$app_name" || log_warn "Gagal mengaktifkan linger secara otomatis via loginctl."
+
     local home_dir="${APPS_BASE_DIR}/${app_name}"
     local systemd_user_dir="${home_dir}/.config/systemd/user"
     mkdir -p "$systemd_user_dir"
 
+    # 9. Clone Git Repo jika disediakan langsung ke home folder
+    if [[ -n "$git_repo" ]]; then
+        log_info "Melakukan git clone dari repositori '${git_repo}' ke '${home_dir}'..."
+        local tmp_clone_dir="/tmp/project_git_${app_name}_$$"
+        rm -rf "$tmp_clone_dir"
+        mkdir -p "$tmp_clone_dir"
+
+        if git clone "$git_repo" "$tmp_clone_dir"; then
+            log_success "Repositori berhasil di-clone."
+            # Salin semua file dan hidden files (.env, .git, dll) ke home_dir
+            cp -a "$tmp_clone_dir"/. "${home_dir}/"
+            rm -rf "$tmp_clone_dir"
+        else
+            rm -rf "$tmp_clone_dir"
+            log_error "Gagal meng-clone repositori git dari '${git_repo}'."
+            read -rp "Apakah Anda ingin membatalkan pembuatan aplikasi? (Y/n): " abort_clone
+            if [[ "$abort_clone" != "n" && "$abort_clone" != "N" ]]; then
+                "${mysql_cmd}" "${mysql_auth[@]}" -e "DROP DATABASE IF EXISTS \`${db_name}\`; DROP USER IF EXISTS '${db_user}'@'localhost'; DROP USER IF EXISTS '${db_user}'@'%'; FLUSH PRIVILEGES;" 2>/dev/null || true
+                cleanup_aborted_app "$app_name"
+                log_error "Pembuatan aplikasi dibatalkan."
+                exit 1
+            fi
+        fi
+    fi
+
+    # 10. Setup Konfigurasi Web Server / Fallback Sesuai Stack
     if [[ "$stack_choice" == "1" || "$stack_choice" == "2" ]]; then
         if [[ "$webserver_name" == "caddy" ]]; then
             log_info "Membuat konfigurasi Caddyfile..."
             if [[ "$stack_choice" == "1" ]]; then
                 # Laravel Caddyfile
-                mkdir -p "${home_dir}/public"
-                cat <<EOF > "${home_dir}/public/index.php"
+                if [ ! -d "${home_dir}/public" ]; then
+                    mkdir -p "${home_dir}/public"
+                fi
+                if [ ! -f "${home_dir}/public/index.php" ] && [ ! -f "${home_dir}/public/index.html" ]; then
+                    cat <<EOF > "${home_dir}/public/index.php"
 <?php
 echo "<h1>Aplikasi Laravel (${app_name}) Siap</h1><p>Menunggu deployment.</p>";
 EOF
+                fi
                 cat <<EOF > "${home_dir}/Caddyfile"
 :${port_fe} {
     root * ${home_dir}/public
@@ -433,8 +488,15 @@ EOF
 EOF
             else
                 # Node.js Fullstack Caddyfile
-                mkdir -p "${home_dir}/dist"
-                cat <<EOF > "${home_dir}/dist/index.html"
+                if [ ! -d "${home_dir}/dist" ] && [ ! -d "${home_dir}/public" ]; then
+                    mkdir -p "${home_dir}/dist"
+                fi
+                local fe_root="${home_dir}/dist"
+                if [ ! -d "${home_dir}/dist" ] && [ -d "${home_dir}/public" ]; then
+                    fe_root="${home_dir}/public"
+                fi
+                if [ ! -f "${fe_root}/index.html" ]; then
+                    cat <<EOF > "${fe_root}/index.html"
 <!DOCTYPE html>
 <html>
 <head><title>${app_name}</title></head>
@@ -444,9 +506,10 @@ EOF
 </body>
 </html>
 EOF
+                fi
                 cat <<EOF > "${home_dir}/Caddyfile"
 :${port_fe} {
-    root * ${home_dir}/dist
+    root * ${fe_root}
     file_server
     handle /api/* {
         reverse_proxy 127.0.0.1:${port_be}
@@ -479,11 +542,15 @@ EOF
 
             if [[ "$stack_choice" == "1" ]]; then
                 # Laravel Nginx
-                mkdir -p "${home_dir}/public"
-                cat <<EOF > "${home_dir}/public/index.php"
+                if [ ! -d "${home_dir}/public" ]; then
+                    mkdir -p "${home_dir}/public"
+                fi
+                if [ ! -f "${home_dir}/public/index.php" ] && [ ! -f "${home_dir}/public/index.html" ]; then
+                    cat <<EOF > "${home_dir}/public/index.php"
 <?php
 echo "<h1>Aplikasi Laravel (${app_name}) Siap</h1><p>Menunggu deployment.</p>";
 EOF
+                fi
                 cat <<EOF > "${home_dir}/nginx.conf"
 worker_processes 1;
 pid ${home_dir}/tmp/nginx.pid;
@@ -525,8 +592,15 @@ http {
 EOF
             else
                 # Node.js Fullstack Nginx
-                mkdir -p "${home_dir}/dist"
-                cat <<EOF > "${home_dir}/dist/index.html"
+                if [ ! -d "${home_dir}/dist" ] && [ ! -d "${home_dir}/public" ]; then
+                    mkdir -p "${home_dir}/dist"
+                fi
+                local fe_root="${home_dir}/dist"
+                if [ ! -d "${home_dir}/dist" ] && [ -d "${home_dir}/public" ]; then
+                    fe_root="${home_dir}/public"
+                fi
+                if [ ! -f "${fe_root}/index.html" ]; then
+                    cat <<EOF > "${fe_root}/index.html"
 <!DOCTYPE html>
 <html>
 <head><title>${app_name}</title></head>
@@ -536,6 +610,7 @@ EOF
 </body>
 </html>
 EOF
+                fi
                 cat <<EOF > "${home_dir}/nginx.conf"
 worker_processes 1;
 pid ${home_dir}/tmp/nginx.pid;
@@ -559,7 +634,7 @@ http {
     server {
         listen ${port_fe};
         server_name _;
-        root ${home_dir}/dist;
+        root ${fe_root};
         index index.html;
 
         location /api/ {
@@ -662,16 +737,6 @@ else
 fi
 EOF
         chmod +x "${home_dir}/run.sh"
-    fi
-
-    # 10. Clone Git Repo jika disediakan
-    if [[ -n "$git_repo" ]]; then
-        log_info "Melakukan git clone dari repositori '${git_repo}'..."
-        if ! su -s /bin/bash "$app_name" -c "git clone '$git_repo' '${home_dir}/app'" 2>/dev/null; then
-            log_warn "Gagal meng-clone repositori git. Silakan clone manual ke dalam ${home_dir}."
-        else
-            log_success "Repositori berhasil di-clone ke ${home_dir}/app."
-        fi
     fi
 
     # 11. Perbaiki Kepemilikan & Izin File
