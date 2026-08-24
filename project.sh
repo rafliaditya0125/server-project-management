@@ -2,12 +2,14 @@
 
 # ==============================================================================
 # project.sh - Script Otomasi Isolasi User & Manajemen Aplikasi Multi-Tenant
+# Mendukung Multi-OS (Arch Linux, Ubuntu, Debian, Fedora, RHEL)
 # ==============================================================================
 
 set -eo pipefail
 
 REGISTRY_DIR="/etc/project-manager"
 REGISTRY_FILE="${REGISTRY_DIR}/apps.json"
+CONFIG_FILE="${REGISTRY_DIR}/config.json"
 APPS_BASE_DIR="/home/apps"
 
 # ------------------------------------------------------------------------------
@@ -71,6 +73,9 @@ init_registry() {
     if [ ! -f "$REGISTRY_FILE" ] && [ "$EUID" -eq 0 ]; then
         echo "[]" > "$REGISTRY_FILE"
     fi
+    if [ ! -f "$CONFIG_FILE" ] && [ "$EUID" -eq 0 ]; then
+        echo "{}" > "$CONFIG_FILE"
+    fi
     if [ ! -d "$APPS_BASE_DIR" ] && [ "$EUID" -eq 0 ]; then
         mkdir -p "$APPS_BASE_DIR"
         chmod 755 "$APPS_BASE_DIR"
@@ -78,63 +83,263 @@ init_registry() {
 }
 
 # ------------------------------------------------------------------------------
-# Registry Management (JSON using node or fallback)
+# Deteksi Sistem Operasi & Helper Paket
 # ------------------------------------------------------------------------------
+detect_os() {
+    if [ -f /etc/os-release ]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        local os_id="${ID:-}"
+        local os_like="${ID_LIKE:-}"
+        if [[ "$os_id" =~ (arch|manjaro|endeavouros|artix|garuda) ]] || [[ "$os_like" =~ arch ]]; then
+            echo "arch"
+        elif [[ "$os_id" =~ (ubuntu|debian|pop|linuxmint|kali|raspbian|elementary) ]] || [[ "$os_like" =~ (debian|ubuntu) ]]; then
+            echo "debian"
+        elif [[ "$os_id" =~ (fedora|rhel|centos|rocky|almalinux) ]] || [[ "$os_like" =~ (fedora|rhel) ]]; then
+            echo "fedora"
+        else
+            echo "$os_id"
+        fi
+    else
+        echo "unknown"
+    fi
+}
+
+detect_php_fpm_socket() {
+    local possible_socks=(
+        "/run/php/php8.4-fpm.sock"
+        "/run/php/php8.3-fpm.sock"
+        "/run/php/php8.2-fpm.sock"
+        "/run/php/php8.1-fpm.sock"
+        "/run/php/php-fpm.sock"
+        "/run/php-fpm/php-fpm.sock"
+        "/run/php-fpm/www.sock"
+        "/var/run/php/php8.3-fpm.sock"
+        "/var/run/php/php8.2-fpm.sock"
+        "/var/run/php/php-fpm.sock"
+    )
+    for sock in "${possible_socks[@]}"; do
+        if [ -S "$sock" ] || [ -e "$sock" ]; then
+            echo "$sock"
+            return 0
+        fi
+    done
+
+    local find_sock
+    find_sock=$(find /run/php /run/php-fpm /var/run/php -type s 2>/dev/null | head -n 1 || true)
+    if [ -n "$find_sock" ]; then
+        echo "$find_sock"
+        return 0
+    fi
+
+    local os
+    os="$(detect_os)"
+    if [ "$os" = "arch" ]; then
+        echo "/run/php-fpm/php-fpm.sock"
+    elif [ "$os" = "debian" ]; then
+        local php_v
+        php_v=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null || echo "8.3")
+        echo "/run/php/php${php_v}-fpm.sock"
+    else
+        echo "/run/php/php8.3-fpm.sock"
+    fi
+}
+
+detect_php_fpm_service() {
+    local candidates=(
+        "php8.4-fpm"
+        "php8.3-fpm"
+        "php8.2-fpm"
+        "php8.1-fpm"
+        "php-fpm"
+        "php7.4-fpm"
+    )
+    for svc in "${candidates[@]}"; do
+        if systemctl list-unit-files "${svc}.service" &>/dev/null && systemctl list-unit-files "${svc}.service" | grep -q "${svc}"; then
+            echo "$svc"
+            return 0
+        fi
+    done
+
+    local os
+    os="$(detect_os)"
+    if [ "$os" = "arch" ]; then
+        echo "php-fpm"
+    else
+        local php_v
+        php_v=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null || echo "8.3")
+        echo "php${php_v}-fpm"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Config & Registry Management (JSON with node/python3/jq fallback)
+# ------------------------------------------------------------------------------
+get_config_value() {
+    local key="$1"
+    local default_val="$2"
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "$default_val"
+        return 0
+    fi
+
+    if command -v node &>/dev/null; then
+        node -e "
+            try {
+                const c = require('${CONFIG_FILE}');
+                console.log(c['${key}'] !== undefined ? c['${key}'] : '${default_val}');
+            } catch(e){ console.log('${default_val}'); }
+        " 2>/dev/null || echo "$default_val"
+    elif command -v python3 &>/dev/null; then
+        python3 -c "
+import json
+try:
+    data = json.load(open('${CONFIG_FILE}'))
+    print(data.get('${key}', '${default_val}'))
+except:
+    print('${default_val}')
+" 2>/dev/null || echo "$default_val"
+    elif command -v jq &>/dev/null; then
+        local val
+        val=$(jq -r ".${key} // \"${default_val}\"" "$CONFIG_FILE" 2>/dev/null || echo "$default_val")
+        echo "${val:-$default_val}"
+    else
+        local val
+        val=$(grep -o "\"${key}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$CONFIG_FILE" 2>/dev/null | head -n 1 | cut -d'"' -f4 || true)
+        echo "${val:-$default_val}"
+    fi
+}
+
+save_config_value() {
+    local key="$1"
+    local value="$2"
+    init_registry
+    if command -v node &>/dev/null; then
+        node -e "
+            const fs = require('fs');
+            const file = '${CONFIG_FILE}';
+            let data = {};
+            try {
+                if (fs.existsSync(file)) {
+                    data = JSON.parse(fs.readFileSync(file, 'utf8'));
+                }
+            } catch(e){}
+            data['${key}'] = '${value}';
+            fs.writeFileSync(file, JSON.stringify(data, null, 2));
+        " 2>/dev/null || true
+    elif command -v python3 &>/dev/null; then
+        python3 -c "
+import json, os
+file = '${CONFIG_FILE}'
+data = {}
+if os.path.exists(file):
+    try: data = json.load(open(file))
+    except: pass
+data['${key}'] = '${value}'
+with open(file, 'w') as f:
+    json.dump(data, f, indent=2)
+" 2>/dev/null || true
+    fi
+}
+
 save_app_metadata() {
     local json_payload="$1"
     init_registry
-    node -e "
-        const fs = require('fs');
-        const file = '${REGISTRY_FILE}';
-        let data = [];
-        try {
-            if (fs.existsSync(file)) {
-                data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if command -v node &>/dev/null; then
+        node -e "
+            const fs = require('fs');
+            const file = '${REGISTRY_FILE}';
+            let data = [];
+            try {
+                if (fs.existsSync(file)) {
+                    data = JSON.parse(fs.readFileSync(file, 'utf8'));
+                }
+            } catch (e) {
+                data = [];
             }
-        } catch (e) {
-            data = [];
-        }
-        const newApp = ${json_payload};
-        // Hapus jika sudah ada nama yang sama
-        data = data.filter(a => a.name !== newApp.name);
-        data.push(newApp);
-        fs.writeFileSync(file, JSON.stringify(data, null, 2));
-    "
+            const newApp = ${json_payload};
+            data = data.filter(a => a.name !== newApp.name);
+            data.push(newApp);
+            fs.writeFileSync(file, JSON.stringify(data, null, 2));
+        "
+    elif command -v python3 &>/dev/null; then
+        python3 -c "
+import json, os
+file = '${REGISTRY_FILE}'
+data = []
+if os.path.exists(file):
+    try: data = json.load(open(file))
+    except: data = []
+new_app = json.loads('''${json_payload}''')
+data = [a for a in data if a.get('name') != new_app.get('name')]
+data.append(new_app)
+with open(file, 'w') as f:
+    json.dump(data, f, indent=2)
+"
+    fi
 }
 
 remove_app_metadata() {
     local app_name="$1"
     init_registry
-    node -e "
-        const fs = require('fs');
-        const file = '${REGISTRY_FILE}';
-        let data = [];
-        try {
-            if (fs.existsSync(file)) {
-                data = JSON.parse(fs.readFileSync(file, 'utf8'));
-                data = data.filter(a => a.name !== '${app_name}');
-                fs.writeFileSync(file, JSON.stringify(data, null, 2));
-            }
-        } catch (e) {}
-    "
+    if command -v node &>/dev/null; then
+        node -e "
+            const fs = require('fs');
+            const file = '${REGISTRY_FILE}';
+            let data = [];
+            try {
+                if (fs.existsSync(file)) {
+                    data = JSON.parse(fs.readFileSync(file, 'utf8'));
+                    data = data.filter(a => a.name !== '${app_name}');
+                    fs.writeFileSync(file, JSON.stringify(data, null, 2));
+                }
+            } catch (e) {}
+        "
+    elif command -v python3 &>/dev/null; then
+        python3 -c "
+import json, os
+file = '${REGISTRY_FILE}'
+if os.path.exists(file):
+    try:
+        data = json.load(open(file))
+        data = [a for a in data if a.get('name') != '${app_name}']
+        with open(file, 'w') as f:
+            json.dump(data, f, indent=2)
+    except: pass
+"
+    fi
 }
 
 get_app_metadata() {
     local app_name="$1"
     init_registry
-    node -e "
-        const fs = require('fs');
-        const file = '${REGISTRY_FILE}';
-        try {
-            if (fs.existsSync(file)) {
-                const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-                const app = data.find(a => a.name === '${app_name}');
-                if (app) {
-                    console.log(JSON.stringify(app));
+    if command -v node &>/dev/null; then
+        node -e "
+            const fs = require('fs');
+            const file = '${REGISTRY_FILE}';
+            try {
+                if (fs.existsSync(file)) {
+                    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+                    const app = data.find(a => a.name === '${app_name}');
+                    if (app) {
+                        console.log(JSON.stringify(app));
+                    }
                 }
-            }
-        } catch (e) {}
-    "
+            } catch (e) {}
+        "
+    elif command -v python3 &>/dev/null; then
+        python3 -c "
+import json, os
+file = '${REGISTRY_FILE}'
+if os.path.exists(file):
+    try:
+        data = json.load(open(file))
+        app = next((a for a in data if a.get('name') == '${app_name}'), None)
+        if app:
+            print(json.dumps(app))
+    except: pass
+"
+    fi
 }
 
 # ------------------------------------------------------------------------------
@@ -177,6 +382,8 @@ cmd_help() {
     echo -e "  sudo $0 [command] [argumen...]\n"
     echo -e "${BOLD}DAFTAR PERINTAH:${NC}"
     echo -e "  ${GREEN}help${NC}                   : Menampilkan daftar opsi command ini"
+    echo -e "  ${GREEN}setup${NC}                  : Setup dependensi server (PHP, Composer, Node.js, NPM,"
+    echo -e "                           Caddy, Nginx, MariaDB, Fish) & konfigurasi PHP-FPM FastCGI"
     echo -e "  ${GREEN}create${NC}                 : Membuat user terisolasi, direktori home, database,"
     echo -e "                           dan konfigurasi web server/service aplikasi"
     echo -e "  ${GREEN}delete <nama>${NC}          : Menghapus user, folder home, database, dan service"
@@ -185,12 +392,286 @@ cmd_help() {
     echo -e "  ${GREEN}manage <nama> <opsi>${NC}   : Mengelola service aplikasi"
     echo -e "                           Pilihan opsi: ${YELLOW}restart${NC}, ${YELLOW}stop${NC}, ${YELLOW}start${NC}, ${YELLOW}status${NC}\n"
     echo -e "${BOLD}STACK YANG DIDUKUNG:${NC}"
-    echo -e "  1. Laravel (PHP-FPM)"
+    echo -e "  1. Laravel (PHP-FPM: Unix Socket / TCP Port)"
     echo -e "  2. Node.js (Fullstack / Static FE + API BE)"
     echo -e "  3. Node.js (Standalone API Only - Direct Node Runtime)\n"
     echo -e "${BOLD}WEB SERVER YANG DIDUKUNG (Stack 1 & 2):${NC}"
-    echo -e "  1. Caddy"
+    echo -e "  1. Caddy (Ringkas & zero-temp folder)"
     echo -e "  2. Nginx (User-space instance)\n"
+    echo -e "${BOLD}SISTEM OPERASI YANG DIDUKUNG:${NC}"
+    echo -e "  - Arch Linux / Manjaro / EndeavourOS (pacman)"
+    echo -e "  - Ubuntu / Debian (apt)"
+    echo -e "  - Fedora / RHEL / AlmaLinux / Rocky (dnf)\n"
+}
+
+# ------------------------------------------------------------------------------
+# Installer Functions for Setup
+# ------------------------------------------------------------------------------
+install_php_and_composer() {
+    local os="$1"
+    log_info "Menginstal PHP, ekstensi umum, dan Composer untuk OS: ${os}..."
+
+    case "$os" in
+        arch)
+            pacman -Sy --noconfirm --needed php php-fpm php-gd php-intl php-sodium php-sqlite composer curl git unzip
+
+            # Aktifkan ekstensi umum pada /etc/php/php.ini jika ada tanda komentar ';'
+            if [ -f /etc/php/php.ini ]; then
+                log_info "Mengaktifkan ekstensi PHP umum pada /etc/php/php.ini..."
+                sed -i 's/^;extension=curl/extension=curl/' /etc/php/php.ini 2>/dev/null || true
+                sed -i 's/^;extension=pdo_mysql/extension=pdo_mysql/' /etc/php/php.ini 2>/dev/null || true
+                sed -i 's/^;extension=mysqli/extension=mysqli/' /etc/php/php.ini 2>/dev/null || true
+                sed -i 's/^;extension=mbstring/extension=mbstring/' /etc/php/php.ini 2>/dev/null || true
+                sed -i 's/^;extension=openssl/extension=openssl/' /etc/php/php.ini 2>/dev/null || true
+                sed -i 's/^;extension=zip/extension=zip/' /etc/php/php.ini 2>/dev/null || true
+                sed -i 's/^;extension=fileinfo/extension=fileinfo/' /etc/php/php.ini 2>/dev/null || true
+                sed -i 's/^;extension=gd/extension=gd/' /etc/php/php.ini 2>/dev/null || true
+                sed -i 's/^;extension=intl/extension=intl/' /etc/php/php.ini 2>/dev/null || true
+                sed -i 's/^;extension=sodium/extension=sodium/' /etc/php/php.ini 2>/dev/null || true
+                sed -i 's/^;extension=iconv/extension=iconv/' /etc/php/php.ini 2>/dev/null || true
+                sed -i 's/^;extension=bcmath/extension=bcmath/' /etc/php/php.ini 2>/dev/null || true
+            fi
+            ;;
+        debian)
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                php-cli php-fpm php-mysql php-mbstring php-xml php-curl php-zip php-intl php-bcmath php-gd php-sqlite3 \
+                curl git unzip composer || {
+                    log_warn "Composer via apt gagal/tidak tersedia. Mengunduh installer resmi Composer..."
+                    curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer || true
+                }
+            ;;
+        fedora)
+            dnf install -y php php-fpm php-mysqlnd php-mbstring php-xml php-curl php-zip php-intl php-bcmath php-gd composer curl git unzip
+            ;;
+        *)
+            log_error "OS '${os}' belum didukung secara otomatis untuk instalasi PHP."
+            return 1
+            ;;
+    esac
+
+    log_success "PHP dan Composer berhasil diinstal!"
+    php -v | head -n 1
+    composer --version 2>/dev/null || true
+}
+
+install_nodejs_and_npm() {
+    local os="$1"
+    log_info "Menginstal Node.js dan NPM untuk OS: ${os}..."
+
+    case "$os" in
+        arch)
+            pacman -Sy --noconfirm --needed nodejs npm
+            ;;
+        debian)
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs npm
+            ;;
+        fedora)
+            dnf install -y nodejs npm
+            ;;
+        *)
+            log_error "OS '${os}' belum didukung secara otomatis untuk instalasi Node.js."
+            return 1
+            ;;
+    esac
+
+    log_success "Node.js dan NPM berhasil diinstal!"
+    node -v 2>/dev/null || true
+    npm -v 2>/dev/null || true
+}
+
+install_web_servers() {
+    local os="$1"
+    log_info "Menginstal Web Server (Caddy & Nginx) untuk OS: ${os}..."
+
+    case "$os" in
+        arch)
+            pacman -Sy --noconfirm --needed caddy nginx
+            ;;
+        debian)
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y nginx
+
+            if ! command -v caddy &>/dev/null; then
+                log_info "Mengonfigurasi repositori resmi Caddy untuk Debian/Ubuntu..."
+                DEBIAN_FRONTEND=noninteractive apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl gnupg
+                curl -1sLF 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg --yes 2>/dev/null || true
+                curl -1sLF 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null || true
+                apt-get update
+                DEBIAN_FRONTEND=noninteractive apt-get install -y caddy || log_warn "Instalasi Caddy via apt gagal. Anda dapat menginstalnya secara manual."
+            fi
+            ;;
+        fedora)
+            dnf install -y caddy nginx
+            ;;
+        *)
+            log_error "OS '${os}' belum didukung secara otomatis untuk instalasi Web Server."
+            return 1
+            ;;
+    esac
+
+    log_success "Web Server (Caddy & Nginx) berhasil diinstal!"
+    caddy version 2>/dev/null || true
+    nginx -v 2>&1 || true
+}
+
+install_shell_and_db_client() {
+    local os="$1"
+    log_info "Menginstal Fish Shell dan MariaDB/MySQL Client untuk OS: ${os}..."
+
+    case "$os" in
+        arch)
+            pacman -Sy --noconfirm --needed fish mariadb-clients
+            ;;
+        debian)
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y fish default-mysql-client || DEBIAN_FRONTEND=noninteractive apt-get install -y fish mariadb-client || true
+            ;;
+        fedora)
+            dnf install -y fish mariadb
+            ;;
+        *)
+            log_error "OS '${os}' belum didukung secara otomatis untuk instalasi Shell & DB Client."
+            return 1
+            ;;
+    esac
+
+    log_success "Fish shell dan Database client berhasil diinstal!"
+}
+
+configure_php_fpm_connection() {
+    local os="$1"
+    echo -e "\n${BOLD}${CYAN}--- Konfigurasi FastCGI PHP-FPM ---${NC}"
+    
+    local detected_sock
+    detected_sock="$(detect_php_fpm_socket)"
+    local current_mode
+    current_mode="$(get_config_value "php_mode" "socket")"
+    local current_sock
+    current_sock="$(get_config_value "php_sock_path" "$detected_sock")"
+    local current_port
+    current_port="$(get_config_value "php_port" "9000")"
+
+    echo -e "Pilih mode koneksi PHP-FPM FastCGI default:"
+    echo -e "  1. Unix Socket (Default/Rekomendasi, misal: ${current_sock})"
+    echo -e "  2. TCP Port (misal: 127.0.0.1:${current_port})"
+    
+    local mode_choice=""
+    while true; do
+        read -rp "Pilihan mode (1/2) [default: 1]: " mode_choice
+        mode_choice="${mode_choice:-1}"
+        case "$mode_choice" in
+            1)
+                read -rp "Masukkan path Unix Socket PHP-FPM [default: ${current_sock}]: " chosen_sock
+                chosen_sock="${chosen_sock:-$current_sock}"
+                save_config_value "php_mode" "socket"
+                save_config_value "php_sock_path" "$chosen_sock"
+                log_success "Mode PHP-FPM disetel ke Unix Socket: ${chosen_sock}"
+                break
+                ;;
+            2)
+                read -rp "Masukkan port TCP PHP-FPM [default: ${current_port}]: " chosen_port
+                chosen_port="${chosen_port:-$current_port}"
+                save_config_value "php_mode" "port"
+                save_config_value "php_port" "$chosen_port"
+                log_success "Mode PHP-FPM disetel ke TCP Port: 127.0.0.1:${chosen_port}"
+                break
+                ;;
+            *)
+                log_error "Pilihan tidak valid. Masukkan 1 atau 2."
+                ;;
+        esac
+    done
+
+    # Service activation
+    local php_svc
+    php_svc="$(detect_php_fpm_service)"
+    log_info "Mengaktifkan dan menjalankan service PHP-FPM '${php_svc}'..."
+    if systemctl enable --now "${php_svc}" &>/dev/null; then
+        log_success "Service '${php_svc}' berhasil diaktifkan dan dijalankan!"
+    else
+        log_warn "Gagal mengaktifkan service '${php_svc}'. Pastikan PHP-FPM sudah terpasang."
+    fi
+
+    save_config_value "php_service" "$php_svc"
+    save_config_value "os" "$os"
+    save_config_value "updated_at" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+}
+
+# ------------------------------------------------------------------------------
+# Command: SETUP
+# ------------------------------------------------------------------------------
+cmd_setup() {
+    check_root
+    init_registry
+
+    local os
+    os="$(detect_os)"
+
+    echo -e "${BOLD}${CYAN}=================================================================${NC}"
+    echo -e "${BOLD}${CYAN}       SETUP DEPENDENSI & FASTCGI PROJECT MANAGER MULTI-OS      ${NC}"
+    echo -e "${BOLD}${CYAN}=================================================================${NC}"
+    echo -e "Distro / OS Terdeteksi : ${BOLD}${GREEN}${os}${NC} ($(uname -s -r -m))"
+    echo -e "Konfigurasi Disimpan Di: ${BOLD}${CONFIG_FILE}${NC}\n"
+
+    echo -e "Pilih menu setup yang ingin dijalankan:"
+    echo -e "  1. ${GREEN}Setup Lengkap (Rekomendasi)${NC}"
+    echo -e "     (Install PHP + Composer + Node.js + NPM + Caddy + Nginx + Fish + DB Client + Konfigurasi FastCGI)"
+    echo -e "  2. Install PHP, Ekstensi & Composer"
+    echo -e "  3. Install Node.js & NPM"
+    echo -e "  4. Install Web Server (Caddy & Nginx)"
+    echo -e "  5. Install Fish Shell & Database Client"
+    echo -e "  6. Konfigurasi PHP-FPM FastCGI (Unix Socket vs TCP Port)"
+    echo -e "  7. Keluar\n"
+
+    local setup_choice=""
+    while true; do
+        read -rp "Pilihan menu (1-7) [default: 1]: " setup_choice
+        setup_choice="${setup_choice:-1}"
+        case "$setup_choice" in
+            1)
+                install_php_and_composer "$os"
+                install_nodejs_and_npm "$os"
+                install_web_servers "$os"
+                install_shell_and_db_client "$os"
+                configure_php_fpm_connection "$os"
+                break
+                ;;
+            2)
+                install_php_and_composer "$os"
+                break
+                ;;
+            3)
+                install_nodejs_and_npm "$os"
+                break
+                ;;
+            4)
+                install_web_servers "$os"
+                break
+                ;;
+            5)
+                install_shell_and_db_client "$os"
+                break
+                ;;
+            6)
+                configure_php_fpm_connection "$os"
+                break
+                ;;
+            7)
+                log_info "Keluar dari menu setup."
+                exit 0
+                ;;
+            *)
+                log_error "Pilihan tidak valid. Masukkan angka antara 1 sampai 7."
+                ;;
+        esac
+    done
+
+    echo -e "\n${BOLD}${GREEN}=================================================================${NC}"
+    echo -e "${BOLD}${GREEN}                   SETUP SELESAI DILAKUKAN                       ${NC}"
+    echo -e "${BOLD}${GREEN}=================================================================${NC}"
+    echo -e "Anda sekarang dapat menjalankan: ${BOLD}sudo $0 create${NC} untuk membuat aplikasi baru."
 }
 
 # ------------------------------------------------------------------------------
@@ -245,6 +726,8 @@ cmd_create() {
     echo -e "  2. Node.js (Fullstack / Static FE + API BE)"
     echo -e "  3. Node.js (Standalone API Only - Direct Node Runtime)"
     local stack_choice=""
+    local stack_name=""
+    local stack_type=""
     while true; do
         read -rp "Pilihan (1/2/3): " stack_choice
         case "$stack_choice" in
@@ -265,25 +748,77 @@ cmd_create() {
     local port_single=""
     local webserver_choice=""
     local webserver_name="None"
+    local php_fpm_mode="socket"
+    local php_sock_path=""
+    local php_tcp_port="9000"
+    local caddy_fastcgi_target=""
+    local nginx_fastcgi_target=""
 
     if [[ "$stack_choice" == "1" ]]; then
-        # Laravel (PHP-FPM) - Hanya meminta 1 Port Web/HTTP
+        # Laravel (PHP-FPM) - Port Web/HTTP
         while true; do
-            read -rp "Masukkan Port Web / HTTP Aplikasi (misal: 8080): " port_fe
+            read -rp "Masukkan Port Web / HTTP Aplikasi (misal: 8000): " port_fe
             if [[ "$port_fe" =~ ^[0-9]+$ ]] && [ "$port_fe" -ge 1 ] && [ "$port_fe" -le 65535 ]; then
                 port_single="$port_fe"
-                port_be="9000" # Default PHP-FPM local port
                 break
             else
                 log_error "Port harus berupa angka antara 1 dan 65535."
             fi
         done
 
+        # Konfigurasi Koneksi FastCGI PHP-FPM
+        local default_fpm_mode
+        default_fpm_mode="$(get_config_value "php_mode" "socket")"
+        local default_sock
+        default_sock="$(get_config_value "php_sock_path" "")"
+        if [ -z "$default_sock" ]; then
+            default_sock="$(detect_php_fpm_socket)"
+        fi
+        local default_port
+        default_port="$(get_config_value "php_port" "9000")"
+
+        echo -e "\nPilih Mode Koneksi PHP-FPM FastCGI:"
+        echo -e "  1. Unix Socket (Default: ${default_sock})"
+        echo -e "  2. TCP Port (Default: 127.0.0.1:${default_port})"
+
+        local default_fpm_choice="1"
+        if [ "$default_fpm_mode" = "port" ]; then
+            default_fpm_choice="2"
+        fi
+
+        local fpm_choice=""
+        read -rp "Pilihan Mode FastCGI (1/2) [default: ${default_fpm_choice}]: " fpm_choice
+        fpm_choice="${fpm_choice:-$default_fpm_choice}"
+
+        if [[ "$fpm_choice" == "2" ]]; then
+            php_fpm_mode="port"
+            read -rp "Masukkan Port TCP PHP-FPM [default: ${default_port}]: " php_tcp_port
+            php_tcp_port="${php_tcp_port:-$default_port}"
+            port_be="$php_tcp_port"
+            caddy_fastcgi_target="127.0.0.1:${php_tcp_port}"
+            nginx_fastcgi_target="127.0.0.1:${php_tcp_port}"
+        else
+            php_fpm_mode="socket"
+            read -rp "Masukkan Path Unix Socket PHP-FPM [default: ${default_sock}]: " php_sock_path
+            php_sock_path="${php_sock_path:-$default_sock}"
+            port_be="socket (${php_sock_path})"
+
+            local clean_sock="${php_sock_path#unix:}"
+            clean_sock="${clean_sock#unix/}"
+            if [[ "$clean_sock" =~ ^/ ]]; then
+                caddy_fastcgi_target="unix/${clean_sock}"
+            else
+                caddy_fastcgi_target="unix//${clean_sock}"
+            fi
+            nginx_fastcgi_target="unix:${clean_sock}"
+        fi
+
         echo -e "\nPilih Web Server:"
         echo -e "  1. Caddy (Ringkas & zero-temp folder)"
         echo -e "  2. Nginx (User-space instance)"
         while true; do
-            read -rp "Pilihan Web Server (1/2): " webserver_choice
+            read -rp "Pilihan Web Server (1/2) [default: 1]: " webserver_choice
+            webserver_choice="${webserver_choice:-1}"
             case "$webserver_choice" in
                 1) webserver_name="caddy"; break ;;
                 2) webserver_name="nginx"; break ;;
@@ -319,7 +854,8 @@ cmd_create() {
         echo -e "  1. Caddy (Ringkas & zero-temp folder)"
         echo -e "  2. Nginx (User-space instance)"
         while true; do
-            read -rp "Pilihan Web Server (1/2): " webserver_choice
+            read -rp "Pilihan Web Server (1/2) [default: 1]: " webserver_choice
+            webserver_choice="${webserver_choice:-1}"
             case "$webserver_choice" in
                 1) webserver_name="caddy"; break ;;
                 2) webserver_name="nginx"; break ;;
@@ -382,7 +918,7 @@ cmd_create() {
         mysql_cmd="mysql"
     else
         log_error "Binary mysql / mariadb client tidak ditemukan di PATH sistem. Database tidak dapat dibuat."
-        log_error "Proses pembuatan aplikasi dibatalkan."
+        log_error "Silakan jalankan 'sudo $0 setup' terlebih dahulu untuk menginstal dependensi."
         exit 1
     fi
 
@@ -410,7 +946,7 @@ cmd_create() {
         log_error "Gagal membuat database '${db_name}' atau user '${db_user}'."
         echo -e "${RED}[Detail MySQL Error]:${NC} $db_exec_err"
         if echo "$db_exec_err" | grep -qiE "password.*policy|policy.*requirements|validate_password|password validation"; then
-            log_warn "Petunjuk: Password database untuk user '${db_user}' tidak memenuhi policy keamanan MySQL server (panjang, huruf besar/kecil, angka, simbol)."
+            log_warn "Petunjuk: Password database untuk user '${db_user}' tidak memenuhi policy keamanan MySQL server."
         fi
         log_error "Proses pembuatan aplikasi dibatalkan (abort)."
         exit 1
@@ -446,7 +982,6 @@ cmd_create() {
 
         if git clone "$git_repo" "$tmp_clone_dir"; then
             log_success "Repositori berhasil di-clone."
-            # Salin semua file dan hidden files (.env, .git, dll) ke home_dir
             cp -a "$tmp_clone_dir"/. "${home_dir}/"
             rm -rf "$tmp_clone_dir"
         else
@@ -463,11 +998,16 @@ cmd_create() {
     fi
 
     # 10. Setup Konfigurasi Web Server / Fallback Sesuai Stack
+    local caddy_bin
+    caddy_bin="$(command -v caddy 2>/dev/null || which caddy 2>/dev/null || echo "/usr/bin/caddy")"
+    local nginx_bin
+    nginx_bin="$(command -v nginx 2>/dev/null || which nginx 2>/dev/null || echo "/usr/sbin/nginx")"
+
     if [[ "$stack_choice" == "1" || "$stack_choice" == "2" ]]; then
         if [[ "$webserver_name" == "caddy" ]]; then
             log_info "Membuat konfigurasi Caddyfile..."
             if [[ "$stack_choice" == "1" ]]; then
-                # Laravel Caddyfile
+                # Laravel Caddyfile (Format Bersih & Standar)
                 if [ ! -d "${home_dir}/public" ]; then
                     mkdir -p "${home_dir}/public"
                 fi
@@ -480,10 +1020,9 @@ EOF
                 cat <<EOF > "${home_dir}/Caddyfile"
 :${port_fe} {
     root * ${home_dir}/public
-    php_fastcgi 127.0.0.1:${port_be}
+    php_fastcgi ${caddy_fastcgi_target}
     file_server
     encode gzip
-    try_files {path} {path}/ /index.php?{query}
 }
 EOF
             else
@@ -520,7 +1059,7 @@ EOF
             fi
 
             # Unit file systemd untuk Caddy
-            cat <<'EOF' > "${systemd_user_dir}/${app_name}.service"
+            cat <<EOF > "${systemd_user_dir}/${app_name}.service"
 [Unit]
 Description=Caddy Web Server - %u
 After=network.target
@@ -528,8 +1067,8 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=%h
-ExecStart=/usr/bin/caddy run --config %h/Caddyfile
-ExecReload=/usr/bin/caddy reload --config %h/Caddyfile
+ExecStart=${caddy_bin} run --config %h/Caddyfile
+ExecReload=${caddy_bin} reload --config %h/Caddyfile
 Restart=always
 
 [Install]
@@ -539,6 +1078,16 @@ EOF
         elif [[ "$webserver_name" == "nginx" ]]; then
             log_info "Membuat direktori temporary Nginx dan file nginx.conf..."
             mkdir -p "${home_dir}/tmp/"{client_body,proxy,fastcgi,uwsgi,scgi}
+
+            local mime_types_path="/etc/nginx/mime.types"
+            if [ ! -f "$mime_types_path" ]; then
+                mime_types_path="$(find /etc/nginx -name "mime.types" 2>/dev/null | head -n 1 || echo "/etc/nginx/mime.types")"
+            fi
+
+            local fastcgi_params_path="/etc/nginx/fastcgi_params"
+            if [ ! -f "$fastcgi_params_path" ]; then
+                fastcgi_params_path="/etc/nginx/fastcgi.conf"
+            fi
 
             if [[ "$stack_choice" == "1" ]]; then
                 # Laravel Nginx
@@ -561,7 +1110,7 @@ events {
 }
 
 http {
-    include /etc/nginx/mime.types;
+    include ${mime_types_path};
     default_type application/octet-stream;
     access_log ${home_dir}/tmp/access.log;
 
@@ -582,10 +1131,10 @@ http {
         }
 
         location ~ \.php$ {
-            fastcgi_pass 127.0.0.1:${port_be};
+            fastcgi_pass ${nginx_fastcgi_target};
             fastcgi_index index.php;
             fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
-            include /etc/nginx/fastcgi_params;
+            include ${fastcgi_params_path};
         }
     }
 }
@@ -621,7 +1170,7 @@ events {
 }
 
 http {
-    include /etc/nginx/mime.types;
+    include ${mime_types_path};
     default_type application/octet-stream;
     access_log ${home_dir}/tmp/access.log;
 
@@ -655,7 +1204,7 @@ EOF
             fi
 
             # Unit file systemd untuk Nginx
-            cat <<'EOF' > "${systemd_user_dir}/${app_name}.service"
+            cat <<EOF > "${systemd_user_dir}/${app_name}.service"
 [Unit]
 Description=Nginx User Web Server - %u
 After=network.target
@@ -664,8 +1213,8 @@ After=network.target
 Type=simple
 WorkingDirectory=%h
 ExecStartPre=/usr/bin/mkdir -p %h/tmp/client_body %h/tmp/proxy %h/tmp/fastcgi
-ExecStart=/usr/sbin/nginx -p %h -c %h/nginx.conf -g "daemon off;"
-ExecReload=/usr/sbin/nginx -p %h -c %h/nginx.conf -s reload
+ExecStart=${nginx_bin} -p %h -c %h/nginx.conf -g "daemon off;"
+ExecReload=${nginx_bin} -p %h -c %h/nginx.conf -s reload
 Restart=always
 
 [Install]
@@ -755,23 +1304,7 @@ EOF
 
     # 13. Simpan Metadata ke Registry
     local metadata_json
-    metadata_json=$(node -e "
-        console.log(JSON.stringify({
-            name: '${app_name}',
-            user: '${app_name}',
-            home: '${home_dir}',
-            stack: '${stack_type}',
-            stack_name: '${stack_name}',
-            webserver: '${webserver_name}',
-            port_fe: '${port_fe:-N/A}',
-            port_be: '${port_be:-N/A}',
-            port: '${port_single:-N/A}',
-            db_name: '${db_name}',
-            db_user: '${db_user}',
-            git_repo: '${git_repo:-None}',
-            created_at: new Date().toISOString()
-        }));
-    ")
+    metadata_json="{\"name\":\"${app_name}\",\"user\":\"${app_name}\",\"home\":\"${home_dir}\",\"stack\":\"${stack_type}\",\"stack_name\":\"${stack_name}\",\"webserver\":\"${webserver_name}\",\"port_fe\":\"${port_fe:-N/A}\",\"port_be\":\"${port_be:-N/A}\",\"port\":\"${port_single:-N/A}\",\"php_mode\":\"${php_fpm_mode}\",\"db_name\":\"${db_name}\",\"db_user\":\"${db_user}\",\"git_repo\":\"${git_repo:-None}\",\"created_at\":\"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\"}"
     save_app_metadata "$metadata_json"
 
     echo -e "\n${BOLD}${GREEN}=================================================================${NC}"
@@ -783,6 +1316,7 @@ EOF
     if [[ "$stack_choice" == "1" ]]; then
         echo -e "  - Web Server     : ${webserver_name}"
         echo -e "  - Port Web/HTTP  : ${BOLD}${port_fe}${NC}"
+        echo -e "  - FastCGI Target : ${BOLD}${caddy_fastcgi_target:-$nginx_fastcgi_target}${NC}"
     elif [[ "$stack_choice" == "2" ]]; then
         echo -e "  - Web Server     : ${webserver_name}"
         echo -e "  - Port Frontend  : ${BOLD}${port_fe}${NC}"
@@ -816,8 +1350,13 @@ cmd_delete() {
     local db_user=""
 
     if [[ -n "$meta" ]]; then
-        db_name=$(node -e "try { const d = ${meta}; console.log(d.db_name || ''); } catch(e){}")
-        db_user=$(node -e "try { const d = ${meta}; console.log(d.db_user || ''); } catch(e){}")
+        if command -v node &>/dev/null; then
+            db_name=$(node -e "try { const d = ${meta}; console.log(d.db_name || ''); } catch(e){}" 2>/dev/null || true)
+            db_user=$(node -e "try { const d = ${meta}; console.log(d.db_user || ''); } catch(e){}" 2>/dev/null || true)
+        elif command -v python3 &>/dev/null; then
+            db_name=$(python3 -c "import json; d=json.loads('''${meta}'''); print(d.get('db_name',''))" 2>/dev/null || true)
+            db_user=$(python3 -c "import json; d=json.loads('''${meta}'''); print(d.get('db_user',''))" 2>/dev/null || true)
+        fi
     fi
 
     db_name="${db_name:-$app_name}"
@@ -902,66 +1441,70 @@ cmd_list() {
     echo -e "${BOLD}${CYAN}                                       DAFTAR APLIKASI TERISOLASI                                       ${NC}"
     echo -e "${BOLD}${CYAN}========================================================================================================${NC}"
 
-    node -e "
-        const fs = require('fs');
-        const { execSync } = require('child_process');
-        const file = '${REGISTRY_FILE}';
-        let apps = [];
-        try {
-            apps = JSON.parse(fs.readFileSync(file, 'utf8'));
-        } catch (e) {}
-
-        if (apps.length === 0) {
-            console.log('  (Belum ada aplikasi yang dibuat)');
-            console.log('========================================================================================================\n');
-            process.exit(0);
-        }
-
-        const pad = (str, len) => (str + ' '.repeat(len)).slice(0, len);
-
-        console.log(
-            pad('NAMA APLIKASI', 16) +
-            pad('STACK', 15) +
-            pad('SERVER', 10) +
-            pad('PORT(FE/BE)', 16) +
-            pad('DATABASE (DB/USER)', 24) +
-            pad('STATUS SERVICE', 15)
-        );
-        console.log('-'.repeat(104));
-
-        apps.forEach(app => {
-            let status = 'INACTIVE';
+    if command -v node &>/dev/null; then
+        node -e "
+            const fs = require('fs');
+            const { execSync } = require('child_process');
+            const file = '${REGISTRY_FILE}';
+            let apps = [];
             try {
-                const out = execSync(\`systemctl --user -M \${app.name}@ is-active \${app.name}.service 2>/dev/null || true\`).toString().trim();
-                if (out === 'active') {
-                    status = 'ACTIVE';
-                }
+                apps = JSON.parse(fs.readFileSync(file, 'utf8'));
             } catch (e) {}
 
-            let ports = '-';
-            if (app.stack === 'laravel') {
-                ports = app.port_fe !== 'N/A' ? app.port_fe : (app.port || '-');
-            } else if (app.stack === 'node-fullstack') {
-                ports = \`\${app.port_fe}/\${app.port_be}\`;
-            } else if (app.stack === 'node-api') {
-                ports = app.port !== 'N/A' ? app.port : '-';
-            } else {
-                ports = app.port !== 'N/A' ? app.port : \`\${app.port_fe}/\${app.port_be}\`;
+            if (apps.length === 0) {
+                console.log('  (Belum ada aplikasi yang dibuat)');
+                console.log('========================================================================================================\n');
+                process.exit(0);
             }
-            const dbInfo = \`\${app.db_name || '-'} / \${app.db_user || '-'}\`;
-            const statusFormatted = status === 'ACTIVE' ? '\x1b[32mACTIVE\x1b[0m' : '\x1b[31mINACTIVE\x1b[0m';
+
+            const pad = (str, len) => (str + ' '.repeat(len)).slice(0, len);
 
             console.log(
-                pad(app.name, 16) +
-                pad(app.stack || '-', 15) +
-                pad(app.webserver || '-', 10) +
-                pad(ports, 16) +
-                pad(dbInfo, 24) +
-                statusFormatted
+                pad('NAMA APLIKASI', 16) +
+                pad('STACK', 15) +
+                pad('SERVER', 10) +
+                pad('PORT(FE/BE)', 18) +
+                pad('DATABASE (DB/USER)', 24) +
+                pad('STATUS SERVICE', 15)
             );
-        });
-        console.log('========================================================================================================\n');
-    "
+            console.log('-'.repeat(104));
+
+            apps.forEach(app => {
+                let status = 'INACTIVE';
+                try {
+                    const out = execSync(\`systemctl --user -M \${app.name}@ is-active \${app.name}.service 2>/dev/null || true\`).toString().trim();
+                    if (out === 'active') {
+                        status = 'ACTIVE';
+                    }
+                } catch (e) {}
+
+                let ports = '-';
+                if (app.stack === 'laravel') {
+                    ports = app.port_fe !== 'N/A' ? app.port_fe : (app.port || '-');
+                } else if (app.stack === 'node-fullstack') {
+                    ports = \`\${app.port_fe}/\${app.port_be}\`;
+                } else if (app.stack === 'node-api') {
+                    ports = app.port !== 'N/A' ? app.port : '-';
+                } else {
+                    ports = app.port !== 'N/A' ? app.port : \`\${app.port_fe}/\${app.port_be}\`;
+                }
+                const dbInfo = \`\${app.db_name || '-'} / \${app.db_user || '-'}\`;
+                const statusFormatted = status === 'ACTIVE' ? '\x1b[32mACTIVE\x1b[0m' : '\x1b[31mINACTIVE\x1b[0m';
+
+                console.log(
+                    pad(app.name, 16) +
+                    pad(app.stack || '-', 15) +
+                    pad(app.webserver || '-', 10) +
+                    pad(ports, 18) +
+                    pad(dbInfo, 24) +
+                    statusFormatted
+                );
+            });
+            console.log('========================================================================================================\n');
+        "
+    else
+        cat "$REGISTRY_FILE"
+    fi
 }
 
 # ------------------------------------------------------------------------------
@@ -1057,6 +1600,9 @@ main() {
     case "$command" in
         help|--help|-h)
             cmd_help
+            ;;
+        setup)
+            cmd_setup "$@"
             ;;
         create)
             cmd_create "$@"

@@ -1,130 +1,158 @@
 # Script Automasi Project Management pada Server
-project.sh merupakan script untuk automasi konsep isolasi user dalam arsitektur app server
+`project.sh` merupakan script otomasi untuk manajemen aplikasi multi-tenant dengan konsep isolasi user penuh (per-user systemd, per-user web server instance/reverse proxy, dan isolasi izin file/database). Script ini mendukung **Multi-OS** (Arch Linux, Ubuntu/Debian, Fedora/RHEL).
+
+---
+
 ## Daftar Opsi Command
-script ini ada beberapa opsi command, yaitu:
-- help : Menampilkan daftar opsi command
-- create : Membuat user, home folder, dan hak akses diambil, menambahkan database dengan nama database yang sama seperti user, menambahkan user sebagai user database tersebut. Membuat service aplikasi yang akan menjalankan sesuai dengan stack
-- delete [nama]	: Menghapus user, home folder, database dan user yang diambil dari variabel [nama]
-- list : Menampilkan list aplikasi yang ada berserta dengan informasi database dan user yang terkait
-- logs [nama] : menampilkan log aplikasi yang diambil dari variabel [nama]
-- manage [nama] [opsi] : 
-	- restart : merestart service aplikasi
-	- stop : menghentikan service aplikasi
-	- start : menjalankan service aplikasi	
-## Alur Script
-1. create : 
-    - Meminta input untuk nama aplikasi(yang jadi username), password user, stack (
-         Pilihan : 
-            1. Laravel (PHP-FPM)
-            2. Node.js (Fullstack / Static FE + API BE)
-            3. Node.js (Standalone API Only - Direct Node Runtime)
-    ), link repositori git (Opsional), meminta port jika pilih stack 1 dan 3
-    - Jika pilih stack 1 atau 2
-        - Minta input port fe lalu minta port be(Jika pilih stack 2).
-        - ada pilihan web server:
-            1. Caddy (Ringkas & zero-temp folder)
-            2. Nginx (User-space instance)
-    - useradd tanpa akses sudo dengan username <nama-aplikasi> yang tadi diinput, password yang tadi diinput, shell fish
-    - Membuat folder home dan aplikasi di /home/apps/<nama-aplikasi>
-    - Meminta input nama database, username database, dan password database
-    - Membuat database, menambahkan user, memberikan hak akses penuh ke database yang baru dibuat ke user yang dibuat tadi(saat membuat database nanti diminta username dan password root database)
-    - Jika pilih stack 1 atau 2 : 
-        - Jika pilih Caddy:
-            - Script men-generate file /home/apps/<nama-aplikasi>/Caddyfile(dengan port fe tadi, disesuaikan sesuai stack yang dipilih, jika stack 2 berarti ada reverse proxy apinya).
-            - Menulis unit file ~/.config/systemd/user/<nama-aplikasi>.service:
-                ``` TOML
-                [Unit]
-                Description=Caddy Web Server - %u
-                After=network.target
-                
-                [Service]
-                Type=simple
-                WorkingDirectory=%h
-                ExecStart=/usr/bin/caddy run --config %h/Caddyfile
-                ExecReload=/usr/bin/caddy reload --config %h/Caddyfile
-                Restart=always
-                
-                [Install]
-                WantedBy=default.target
-                ```
-        - jika pilih nginx:
-            - Script membuat direktori temporary: mkdir -p /home/apps/<nama-aplikasi>/tmp/{client_body,proxy,fastcgi,uwsgi,scgi}.
-            - Script men-generate file /home/apps/<nama-aplikasi>/nginx.conf(dengan port fe tadi, disesuaikan sesuai stack yang dipilih, jika stack 2 berarti ada reverse proxy apinya).
-            - Menulis unit file ~/.config/systemd/user/<nama-aplikasi>.service:
-                ``` TOML
-                [Unit]
-                Description=Nginx User Web Server - %u
-                After=network.target
 
-                [Service]
-                Type=simple
-                WorkingDirectory=%h
-                ExecStartPre=/usr/bin/mkdir -p %h/tmp/client_body %h/tmp/proxy %h/tmp/fastcgi
-                ExecStart=/usr/sbin/nginx -p %h -c %h/nginx.conf -g "daemon off;"
-                ExecReload=/usr/sbin/nginx -p %h -c %h/nginx.conf -s reload
-                Restart=always
+Script ini menyediakan beberapa opsi command:
 
-                [Install]
-                WantedBy=default.target
-                ```
-    - Jika Pilih Stack 3:
-        - Menulis unit file ~/.config/systemd/user/<nama-aplikasi>.service:
-            ``` TOML
-            [Unit]
-            Description=NodeJS App (Direct Runtime) - %u
-            After=network.target
+- **`help`** : Menampilkan panduan dan daftar opsi command.
+- **`setup`** : Melakukan setup dependensi server (PHP, Composer, Node.js, NPM, Caddy, Nginx, MariaDB Client, Fish Shell) serta konfigurasi mode FastCGI PHP-FPM (Unix Socket / TCP Port) dengan dukungan Multi-OS otomatis.
+- **`create`** : Membuat user sistem terisolasi, home folder `/home/apps/<nama-aplikasi>`, database & user MySQL, serta service systemd user sesuai stack dan pilihan web server (Caddy / Nginx).
+- **`delete <nama>`** : Menghapus user sistem, direktori home aplikasi, database & user MySQL, dan service systemd user.
+- **`list`** : Menampilkan daftar aplikasi yang terdaftar beserta status service, web server, port, dan database terkait.
+- **`logs <nama>`** : Menampilkan log journalctl service systemd user aplikasi.
+- **`manage <nama> <opsi>`** : Mengelola service aplikasi:
+  - `restart` : Merestart service aplikasi
+  - `stop` : Menghentikan service aplikasi
+  - `start` : Menjalankan service aplikasi
+  - `status` : Menampilkan status detail service aplikasi
 
-            [Service]
-            Type=simple
-            WorkingDirectory=%h
-            ExecStart=%h/run.sh
-            Restart=always
-            RestartSec=5s
+---
 
-            # Alokasi environment
-            Environment=PORT=<Port yang tadi diinput>
-            Environment=NODE_ENV=production
-            Environment=PATH=/usr/local/bin:/usr/bin:/bin:%h/.nvm/versions/node/current/bin
+## Sistem Operasi yang Didukung
 
-            # Membaca .env milik user jika tersedia
-            EnvironmentFile=-%h/.env
+- **Arch Linux / Manjaro / EndeavourOS** (via `pacman`)
+- **Ubuntu / Debian** (via `apt`)
+- **Fedora / RHEL / AlmaLinux / Rocky** (via `dnf`)
 
-            [Install]
-            WantedBy=default.target
-            ```
-        - Menulis shell script run.sh:
-            ``` bash
-            #!/bin/bash
-            set -e
+---
 
-            # 1. Fallback Server jika dependensi / repo belum siap
-            if [ ! -f "package.json" ] && [ ! -f "backend/package.json" ] && [ ! -f "api/package.json" ] && [ ! -f "server/package.json" ]; then
-                echo "[INFO] Project files not found. Starting placeholder server on port $PORT..."
-                exec node -e "
-                    const http = require('http');
-                    http.createServer((req, res) => {
-                        res.writeHead(200, { 'Content-Type': 'text/html' });
-                        res.end('<h1>Application Ready</h1><p>Awaiting deployment in user home directory.</p>');
-                    }).listen(process.env.PORT || [Port yang tadi diinput], '0.0.0.0');
-                "
-            fi
+## Alur Kerja Script
 
-            # 2. Deteksi lokasi working directory & jalankan entry point
-            if [ -d "backend" ] && [ -f "backend/package.json" ]; then
-                cd backend
-            elif [ -d "api" ] && [ -f "api/package.json" ]; then
-                cd api
-            elif [ -d "server" ] && [ -f "server/package.json" ]; then
-                cd server
-            fi
+### 1. `setup` (Setup Dependensi Server & FastCGI Multi-OS)
+Command ini digunakan saat inisialisasi server:
+1. Mendeteksi distro Linux secara otomatis dari `/etc/os-release`.
+2. Menyediakan menu interaktif:
+   - **Setup Lengkap (Rekomendasi)**: Menginstal seluruh paket kebutuhan (PHP + ekstensi lengkap, Composer, Node.js, NPM, Caddy, Nginx, MariaDB client, Fish shell) dan konfigurasi FastCGI.
+   - **Install PHP & Composer**: Menginstal runtime PHP, ekstensi (curl, pdo_mysql, mysqli, mbstring, openssl, zip, gd, intl, sodium, bcmath), dan Composer.
+   - **Install Node.js & NPM**: Menginstal runtime Node.js dan package manager NPM.
+   - **Install Web Server**: Menginstal Caddy dan Nginx.
+   - **Install Shell & DB Client**: Menginstal Fish shell dan MariaDB/MySQL client.
+   - **Konfigurasi FastCGI PHP-FPM**:
+     - Memilih mode: **Unix Socket** (misal: `/run/php/php8.3-fpm.sock` atau `/run/php-fpm/php-fpm.sock`) vs **TCP Port** (misal: `127.0.0.1:9000`).
+     - Mengaktifkan dan menjalankan service PHP-FPM (`systemctl enable --now ...`).
+     - Menyimpan konfigurasi global ke `/etc/project-manager/config.json`.
 
-            # 3. Jalankan aplikasi (Developer bebas mengubah baris ini jika pakai Next.js, Bun, atau TS direct)
-            if [ -f "dist/main.js" ]; then
-                exec node dist/main.js
-            elif [ -f "dist/index.js" ]; then
-                exec node dist/index.js
-            else
-                exec npm start
-            fi
-            ```
-    - Jika tadi memasukkan link repository maka otomatis menjalankan `git clone [link-repo]` di /home/apps/<nama-aplikasi>/. Jika tidak, skip proses ini
+---
+
+### 2. `create` (Pembuatan Aplikasi Terisolasi)
+1. **Input Data**:
+   - Nama aplikasi (sebagai username sistem terisolasi).
+   - Password user sistem.
+   - Pilihan Stack:
+     1. **Laravel (PHP-FPM)**
+     2. **Node.js (Fullstack / Static FE + API BE)**
+     3. **Node.js (Standalone API Only - Direct Node Runtime)**
+   - Link repositori Git (Opsional).
+
+2. **Konfigurasi Port & Web Server**:
+   - **Jika Stack 1 (Laravel)**:
+     - Meminta Port Web/HTTP (misal: `8000`).
+     - Meminta mode koneksi FastCGI PHP-FPM (Unix Socket atau TCP Port, otomatis mengambil nilai default dari hasil `setup`).
+     - Memilih Web Server: **Caddy** atau **Nginx**.
+   - **Jika Stack 2 (Node.js Fullstack)**:
+     - Meminta Port Frontend (misal: `8080`) dan Port Backend API (misal: `3001`).
+     - Memilih Web Server: **Caddy** atau **Nginx**.
+   - **Jika Stack 3 (Node.js Direct API)**:
+     - Meminta 1 Port Aplikasi (misal: `3000`).
+
+3. **Database**:
+   - Meminta nama database, username database, dan password database.
+   - Memverifikasi koneksi root DB, lalu membuat database dan user MySQL serta memberikan full privileges.
+
+4. **User & Lingkungan**:
+   - Membuat user tanpa akses sudo dengan home direktori `/home/apps/<nama-aplikasi>`.
+   - Mengaktifkan systemd user lingering (`loginctl enable-linger <nama>`).
+   - Melakukan `git clone` jika link repositori disertakan.
+
+5. **Konfigurasi Web Server & Service**:
+   - **Caddy (Laravel)**:
+     File `/home/apps/<nama-aplikasi>/Caddyfile`:
+     ```caddyfile
+     :8000 {
+         root * /home/apps/<nama-aplikasi>/public
+         php_fastcgi unix//run/php/php8.3-fpm.sock
+         file_server
+         encode gzip
+     }
+     ```
+     *(Jika mode TCP Port, target berupa `127.0.0.1:9000`)*.
+     Unit file systemd user: `~/.config/systemd/user/<nama-aplikasi>.service`:
+     ```ini
+     [Unit]
+     Description=Caddy Web Server - %u
+     After=network.target
+
+     [Service]
+     Type=simple
+     WorkingDirectory=%h
+     ExecStart=/usr/bin/caddy run --config %h/Caddyfile
+     ExecReload=/usr/bin/caddy reload --config %h/Caddyfile
+     Restart=always
+
+     [Install]
+     WantedBy=default.target
+     ```
+
+   - **Nginx (Laravel)**:
+     File `/home/apps/<nama-aplikasi>/nginx.conf`:
+     ```nginx
+     worker_processes 1;
+     pid /home/apps/<nama-aplikasi>/tmp/nginx.pid;
+     error_log /home/apps/<nama-aplikasi>/tmp/error.log;
+
+     events {
+         worker_connections 1024;
+     }
+
+     http {
+         include /etc/nginx/mime.types;
+         default_type application/octet-stream;
+         access_log /home/apps/<nama-aplikasi>/tmp/access.log;
+
+         client_body_temp_path /home/apps/<nama-aplikasi>/tmp/client_body;
+         proxy_temp_path /home/apps/<nama-aplikasi>/tmp/proxy;
+         fastcgi_temp_path /home/apps/<nama-aplikasi>/tmp/fastcgi;
+         uwsgi_temp_path /home/apps/<nama-aplikasi>/tmp/uwsgi;
+         scgi_temp_path /home/apps/<nama-aplikasi>/tmp/scgi;
+
+         server {
+             listen 8000;
+             server_name _;
+             root /home/apps/<nama-aplikasi>/public;
+             index index.php index.html;
+
+             location / {
+                 try_files $uri $uri/ /index.php?$query_string;
+             }
+
+             location ~ \.php$ {
+                 fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+                 fastcgi_index index.php;
+                 fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                 include /etc/nginx/fastcgi_params;
+             }
+         }
+     }
+     ```
+     *(Jika mode TCP Port, fastcgi_pass berupa `127.0.0.1:9000;`)*.
+
+   - **Node.js Direct Runtime (Stack 3)**:
+     Unit file systemd user: `~/.config/systemd/user/<nama-aplikasi>.service` dan script `~/run.sh`.
+
+6. **Aktivasi Service & Registry**:
+   - Mengatur perizinan direktori (`chown -R <nama>:<nama>`, `chmod 750`).
+   - Menjalankan `systemctl --user enable --now <nama-aplikasi>.service`.
+   - Mencatat metadata aplikasi ke `/etc/project-manager/apps.json`.
