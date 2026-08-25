@@ -383,8 +383,8 @@ cmd_help() {
     echo -e "${BOLD}DAFTAR PERINTAH:${NC}"
     echo -e "  ${GREEN}help${NC}                   : Menampilkan daftar opsi command ini"
     echo -e "  ${GREEN}setup [opsi...]${NC}        : Setup dependensi server (PHP, Composer, Node.js, NPM,"
-    echo -e "                           Caddy, Nginx, MariaDB, Fish, Symlink CLI) & FastCGI."
-    echo -e "                           Opsi: --php, --node, --web, --db, --fastcgi, --symlink, --all"
+    echo -e "                           Caddy, Nginx, MariaDB, Fish, Symlink, Shell Completion) & FastCGI."
+    echo -e "                           Opsi: --php, --node, --web, --db, --fastcgi, --symlink, --completion, --all"
     echo -e "                           Pengecualian: -e, --except=<tahap1,tahap2...>"
     echo -e "  ${GREEN}create${NC}                 : Membuat user terisolasi, direktori home, database,"
     echo -e "                           dan konfigurasi web server/service aplikasi"
@@ -421,15 +421,17 @@ show_setup_help() {
     echo -e "  ${GREEN}--db${NC}, ${GREEN}db${NC}                 : Install Fish Shell dan MariaDB/MySQL Client"
     echo -e "  ${GREEN}--fastcgi${NC}, ${GREEN}fastcgi${NC}       : Konfigurasi koneksi PHP-FPM FastCGI (Socket / TCP)"
     echo -e "  ${GREEN}--symlink${NC}, ${GREEN}symlink${NC}       : Buat symlink global ke /usr/local/bin/project"
+    echo -e "  ${GREEN}--completion${NC}, ${GREEN}completion${NC} : Pasang shell autocompletion (Bash, Zsh, Fish)"
     echo -e "  ${GREEN}-e=<list>${NC}, ${GREEN}--except=<list>${NC}: Kecualikan tahap tertentu (pisahkan koma jika jamak)"
     echo -e "  ${GREEN}--interactive${NC}, ${GREEN}-i${NC}        : Jalankan setup melalui menu interaktif"
     echo -e "  ${GREEN}--help${NC}, ${GREEN}-h${NC}               : Menampilkan bantuan opsi setup ini\n"
     echo -e "${BOLD}NAMA TAHAP UNTUK --except:${NC}"
-    echo -e "  php, composer, node, web, db, shell, fastcgi, symlink\n"
+    echo -e "  php, composer, node, web, db, shell, fastcgi, symlink, completion\n"
     echo -e "${BOLD}CONTOH PENGGUNAAN:${NC}"
-    echo -e "  sudo $0 setup                    # Menjalankan seluruh tahap (termasuk symlink)"
+    echo -e "  sudo $0 setup                    # Menjalankan seluruh tahap (termasuk symlink & completion)"
     echo -e "  sudo $0 setup --except=db        # Menjalankan semua tahap KECUALI database/shell"
     echo -e "  sudo $0 setup -e php,fastcgi     # Menjalankan semua KECUALI PHP & FastCGI"
+    echo -e "  sudo $0 setup --completion       # Hanya memasang autocompletion shell"
     echo -e "  sudo $0 setup --symlink          # Hanya membuat symlink /usr/local/bin/project"
     echo -e "  sudo $0 setup php node           # Hanya install PHP dan Node.js"
     echo -e "  sudo $0 setup --web --fastcgi    # Hanya install Web Server dan FastCGI"
@@ -448,6 +450,293 @@ setup_cli_symlink() {
     ln -sf "$script_path" /usr/local/bin/project
     log_success "Symlink global berhasil dibuat: /usr/local/bin/project -> ${script_path}"
     log_info "Anda sekarang dapat menjalankan perintah secara langsung: 'sudo project <command>'"
+}
+
+generate_bash_completion() {
+    cat << 'EOF'
+# ==============================================================================
+# Bash Completion for project & project.sh (Multi-Tenant Project Manager)
+# ==============================================================================
+
+_project_completions() {
+    local cur prev words cword
+    if declare -F _init_completion >/dev/null 2>&1; then
+        _init_completion || return
+    else
+        cur="${COMP_WORDS[COMP_CWORD]}"
+        prev="${COMP_WORDS[COMP_CWORD-1]}"
+        words=("${COMP_WORDS[@]}")
+        cword=$COMP_CWORD
+    fi
+
+    local commands="help setup create delete list logs manage"
+    local setup_opts="--all --php --node --web --db --fastcgi --symlink --completion --interactive --help -e --except= all php node web db fastcgi symlink completion"
+    local manage_opts="restart stop start status"
+
+    # Temukan index kata kunci 'project' atau 'project.sh' (mendukung 'sudo project ...')
+    local cmd_idx=-1
+    for ((i=0; i < cword; i++)); do
+        local w="${words[i]}"
+        if [[ "$w" == "project" || "$w" == *"project.sh" ]]; then
+            cmd_idx=$i
+            break
+        fi
+    done
+
+    # Jika dipanggil langsung tanpa keyword project yang cocok, default ke 0
+    if [[ $cmd_idx -eq -1 ]]; then
+        cmd_idx=0
+    fi
+
+    local rel_pos=$((cword - cmd_idx))
+
+    # Mendapatkan daftar aplikasi aktif
+    local apps=""
+    if [ -d "/home/apps" ]; then
+        apps="$(command ls -1 /home/apps 2>/dev/null)"
+    fi
+
+    # Posisi 1 setelah command (project <TAB>) -> Subcommands
+    if [[ $rel_pos -eq 1 ]]; then
+        COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
+        return 0
+    fi
+
+    local subcmd="${words[cmd_idx+1]}"
+
+    case "$subcmd" in
+        setup)
+            if [[ "$cur" == -e=* || "$cur" == --except=* ]]; then
+                local prefix="${cur%%=*}="
+                local cur_val="${cur#*=}"
+                local stages="php composer node web db shell fastcgi symlink completion"
+                COMPREPLY=( $(compgen -P "$prefix" -W "$stages" -- "$cur_val") )
+            elif [[ "$prev" == "-e" || "$prev" == "--except" ]]; then
+                local stages="php composer node web db shell fastcgi symlink completion"
+                COMPREPLY=( $(compgen -W "$stages" -- "$cur") )
+            else
+                COMPREPLY=( $(compgen -W "$setup_opts" -- "$cur") )
+            fi
+            ;;
+        delete|logs)
+            if [[ $rel_pos -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "$apps" -- "$cur") )
+            fi
+            ;;
+        manage)
+            if [[ $rel_pos -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "$apps" -- "$cur") )
+            elif [[ $rel_pos -eq 3 ]]; then
+                COMPREPLY=( $(compgen -W "$manage_opts" -- "$cur") )
+            fi
+            ;;
+    esac
+}
+
+# Daftarkan completion untuk project, project.sh, dan path absolutnya
+complete -F _project_completions project
+complete -F _project_completions project.sh
+complete -F _project_completions /usr/local/bin/project
+complete -F _project_completions ./project.sh
+EOF
+}
+
+generate_zsh_completion() {
+    cat << 'EOF'
+#compdef project project.sh /usr/local/bin/project ./project.sh
+
+_project_apps() {
+    local -a apps
+    if [[ -d /home/apps ]]; then
+        apps=($(command ls -1 /home/apps 2>/dev/null))
+        _describe -t apps 'aplikasi' apps
+    fi
+}
+
+_project() {
+    local curcontext="$curcontext" state line
+    typeset -A opt_args
+
+    local -a commands
+    commands=(
+        'help:Menampilkan panduan dan daftar opsi command'
+        'setup:Setup dependensi server, FastCGI, symlink & completion'
+        'create:Membuat user sistem dan aplikasi terisolasi'
+        'delete:Menghapus user, direktori, database, dan service'
+        'list:Menampilkan daftar aplikasi berserta status service'
+        'logs:Menampilkan log journalctl service systemd aplikasi'
+        'manage:Mengelola service aplikasi (restart/stop/start/status)'
+    )
+
+    _arguments -C \
+        '1:command:->cmd' \
+        '*::arg:->args'
+
+    case $state in
+        cmd)
+            _describe -t commands 'command' commands
+            ;;
+        args)
+            case $line[1] in
+                setup)
+                    _arguments \
+                        '--all[Jalankan semua tahap setup]' \
+                        '--php[Install PHP, ekstensi & Composer]' \
+                        '--node[Install Node.js & NPM]' \
+                        '--web[Install Web Server (Caddy & Nginx)]' \
+                        '--db[Install Fish Shell & MariaDB/MySQL Client]' \
+                        '--fastcgi[Konfigurasi PHP-FPM FastCGI]' \
+                        '--symlink[Buat symlink global /usr/local/bin/project]' \
+                        '--completion[Pasang autocompletion shell (Bash/Zsh/Fish)]' \
+                        '--interactive[Jalankan setup via menu interaktif]' \
+                        '(-e --except)'{-e,--except}'=[Kecualikan tahap tertentu]:tahap:(php composer node web db shell fastcgi symlink completion)' \
+                        '(-h --help)'{-h,--help}'[Tampilkan panduan setup]'
+                    ;;
+                delete|logs)
+                    _arguments '1:aplikasi:_project_apps'
+                    ;;
+                manage)
+                    _arguments \
+                        '1:aplikasi:_project_apps' \
+                        '2:action:(restart stop start status)'
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_project "$@"
+EOF
+}
+
+generate_fish_completion() {
+    cat << 'EOF'
+# ==============================================================================
+# Fish Completion for project & project.sh (Multi-Tenant Project Manager)
+# ==============================================================================
+
+function __fish_project_apps
+    if test -d /home/apps
+        command ls -1 /home/apps 2>/dev/null
+    end
+end
+
+function __fish_project_needs_command
+    set -l cmd (commandline -opc)
+    if test (count $cmd) -eq 1
+        return 0
+    end
+    if test (count $cmd) -eq 2; and test "$cmd[1]" = "sudo"
+        return 0
+    end
+    return 1
+end
+
+function __fish_project_using_subcommand
+    set -l cmd (commandline -opc)
+    set -l subcmd $argv[1]
+    for c in $cmd
+        if test "$c" = "$subcmd"
+            return 0
+        end
+    end
+    return 1
+end
+
+for c in project project.sh /usr/local/bin/project ./project.sh
+    complete -c $c -f
+
+    # Subcommands
+    complete -c $c -n "__fish_project_needs_command" -a help -d "Menampilkan panduan command"
+    complete -c $c -n "__fish_project_needs_command" -a setup -d "Setup dependensi & shell completion"
+    complete -c $c -n "__fish_project_needs_command" -a create -d "Membuat aplikasi terisolasi"
+    complete -c $c -n "__fish_project_needs_command" -a delete -d "Menghapus aplikasi terisolasi"
+    complete -c $c -n "__fish_project_needs_command" -a list -d "Menampilkan daftar aplikasi"
+    complete -c $c -n "__fish_project_needs_command" -a logs -d "Menampilkan log journalctl aplikasi"
+    complete -c $c -n "__fish_project_needs_command" -a manage -d "Mengelola service aplikasi"
+
+    # Setup Subcommands & Flags
+    complete -c $c -n "__fish_project_using_subcommand setup" -l all -d "Jalankan semua tahap"
+    complete -c $c -n "__fish_project_using_subcommand setup" -l php -d "Install PHP & Composer"
+    complete -c $c -n "__fish_project_using_subcommand setup" -l node -d "Install Node.js & NPM"
+    complete -c $c -n "__fish_project_using_subcommand setup" -l web -d "Install Web Server (Caddy & Nginx)"
+    complete -c $c -n "__fish_project_using_subcommand setup" -l db -d "Install Fish & DB Client"
+    complete -c $c -n "__fish_project_using_subcommand setup" -l fastcgi -d "Konfigurasi FastCGI"
+    complete -c $c -n "__fish_project_using_subcommand setup" -l symlink -d "Buat symlink /usr/local/bin/project"
+    complete -c $c -n "__fish_project_using_subcommand setup" -l completion -d "Pasang autocompletion shell"
+    complete -c $c -n "__fish_project_using_subcommand setup" -s e -l except -d "Kecualikan tahap tertentu"
+    complete -c $c -n "__fish_project_using_subcommand setup" -s i -l interactive -d "Menu interaktif"
+    complete -c $c -n "__fish_project_using_subcommand setup" -s h -l help -d "Panduan opsi setup"
+
+    # Delete & Logs Arguments
+    complete -c $c -n "__fish_project_using_subcommand delete" -a "(__fish_project_apps)" -d "Nama aplikasi"
+    complete -c $c -n "__fish_project_using_subcommand logs" -a "(__fish_project_apps)" -d "Nama aplikasi"
+
+    # Manage Arguments
+    complete -c $c -n "__fish_project_using_subcommand manage" -a "(__fish_project_apps)" -d "Nama aplikasi"
+    complete -c $c -n "__fish_project_using_subcommand manage" -a "restart stop start status" -d "Aksi service"
+end
+EOF
+}
+
+setup_shell_completions() {
+    log_info "Mengonfigurasi shell autocompletion untuk Bash, Zsh, dan Fish..."
+
+    # 1. Bash Completion
+    local bash_dirs=(
+        "/etc/bash_completion.d"
+        "/usr/share/bash-completion/completions"
+        "/etc/profile.d"
+    )
+    for bdir in "${bash_dirs[@]}"; do
+        if [ -d "$bdir" ] || mkdir -p "$bdir" 2>/dev/null; then
+            if [ "$bdir" = "/etc/profile.d" ]; then
+                generate_bash_completion > "${bdir}/project_completion.sh" 2>/dev/null || true
+            else
+                generate_bash_completion > "${bdir}/project" 2>/dev/null || true
+            fi
+        fi
+    done
+
+    # 2. Zsh Completion
+    local zsh_dirs=(
+        "/usr/share/zsh/site-functions"
+        "/usr/local/share/zsh/site-functions"
+        "/usr/share/zsh/vendor-completions"
+        "/etc/zsh/site-functions"
+    )
+    for zdir in "${zsh_dirs[@]}"; do
+        if [ -d "$zdir" ] || mkdir -p "$zdir" 2>/dev/null; then
+            generate_zsh_completion > "${zdir}/_project" 2>/dev/null || true
+        fi
+    done
+
+    # 3. Fish Completion
+    local fish_dirs=(
+        "/usr/share/fish/vendor_completions.d"
+        "/etc/fish/completions"
+    )
+    for fdir in "${fish_dirs[@]}"; do
+        if [ -d "$fdir" ] || mkdir -p "$fdir" 2>/dev/null; then
+            generate_fish_completion > "${fdir}/project.fish" 2>/dev/null || true
+        fi
+    done
+
+    # Konfigurasi juga di home user untuk Fish jika ada
+    for u_home in /home/* /root; do
+        if [ -d "${u_home}/.config/fish" ]; then
+            mkdir -p "${u_home}/.config/fish/completions" 2>/dev/null || true
+            generate_fish_completion > "${u_home}/.config/fish/completions/project.fish" 2>/dev/null || true
+            local u_name
+            u_name=$(basename "$u_home")
+            if id "$u_name" &>/dev/null; then
+                chown -R "${u_name}:${u_name}" "${u_home}/.config/fish/completions" 2>/dev/null || true
+            fi
+        fi
+    done
+
+    log_success "Autocompletion berhasil dipasang untuk Bash, Zsh, dan Fish!"
+    log_info "Buka terminal baru atau jalankan: source /etc/profile.d/project_completion.sh"
 }
 
 install_php_and_composer() {
@@ -655,6 +944,7 @@ cmd_setup() {
     local run_shell_db=false
     local run_fastcgi=false
     local run_symlink=false
+    local run_completion=false
     local run_all=false
     local specific_selected=false
     local interactive=false
@@ -698,6 +988,11 @@ cmd_setup() {
                 ;;
             --symlink|symlink|--bin|bin|--link|link)
                 run_symlink=true
+                specific_selected=true
+                shift
+                ;;
+            --completion|completion|--completions|completions|--autocomplete|autocomplete)
+                run_completion=true
                 specific_selected=true
                 shift
                 ;;
@@ -746,22 +1041,24 @@ cmd_setup() {
 
         echo -e "Pilih menu setup yang ingin dijalankan:"
         echo -e "  1. ${GREEN}Setup Lengkap (Semua Tahap)${NC}"
-        echo -e "     (Symlink CLI + PHP + Composer + Node.js + NPM + Caddy + Nginx + Fish + DB Client + FastCGI)"
+        echo -e "     (Symlink CLI + Autocompletion + PHP + Node.js + Web Server + Fish/DB + FastCGI)"
         echo -e "  2. Install PHP, Ekstensi & Composer"
         echo -e "  3. Install Node.js & NPM"
         echo -e "  4. Install Web Server (Caddy & Nginx)"
         echo -e "  5. Install Fish Shell & Database Client"
         echo -e "  6. Konfigurasi PHP-FPM FastCGI (Unix Socket vs TCP Port)"
         echo -e "  7. Buat Symlink Global (/usr/local/bin/project)"
-        echo -e "  8. Keluar\n"
+        echo -e "  8. Pasang Shell Autocompletion (Bash, Zsh, Fish)"
+        echo -e "  9. Keluar\n"
 
         local setup_choice=""
         while true; do
-            read -rp "Pilihan menu (1-8) [default: 1]: " setup_choice
+            read -rp "Pilihan menu (1-9) [default: 1]: " setup_choice
             setup_choice="${setup_choice:-1}"
             case "$setup_choice" in
                 1)
                     setup_cli_symlink
+                    setup_shell_completions
                     install_php_and_composer "$os"
                     install_nodejs_and_npm "$os"
                     install_web_servers "$os"
@@ -794,11 +1091,15 @@ cmd_setup() {
                     break
                     ;;
                 8)
+                    setup_shell_completions
+                    break
+                    ;;
+                9)
                     log_info "Keluar dari menu setup."
                     exit 0
                     ;;
                 *)
-                    log_error "Pilihan tidak valid. Masukkan angka antara 1 sampai 8."
+                    log_error "Pilihan tidak valid. Masukkan angka antara 1 sampai 9."
                     ;;
             esac
         done
@@ -813,6 +1114,7 @@ cmd_setup() {
     # Jika tidak ada tahap tertentu yang dipilih atau menggunakan --all, jalankan semua tahap
     if [ "$specific_selected" = false ] || [ "$run_all" = true ]; then
         run_symlink=true
+        run_completion=true
         run_php=true
         run_node=true
         run_web=true
@@ -841,13 +1143,16 @@ cmd_setup() {
             symlink|bin|link)
                 run_symlink=false
                 ;;
+            completion|completions|autocomplete|autocompletion)
+                run_completion=false
+                ;;
             *)
                 log_warn "Tahap pengecualian '$exc' pada --except tidak dikenal. Diabaikan."
                 ;;
         esac
     done
 
-    if [ "$run_symlink" = false ] && [ "$run_php" = false ] && [ "$run_node" = false ] && [ "$run_web" = false ] && [ "$run_shell_db" = false ] && [ "$run_fastcgi" = false ]; then
+    if [ "$run_symlink" = false ] && [ "$run_completion" = false ] && [ "$run_php" = false ] && [ "$run_node" = false ] && [ "$run_web" = false ] && [ "$run_shell_db" = false ] && [ "$run_fastcgi" = false ]; then
         log_warn "Tidak ada tahap setup yang dijalankan karena semua tahap dikecualikan."
         return 0
     fi
@@ -864,6 +1169,10 @@ cmd_setup() {
     # Jalankan tahap-tahap yang dipilih
     if [ "$run_symlink" = true ]; then
         setup_cli_symlink
+    fi
+
+    if [ "$run_completion" = true ]; then
+        setup_shell_completions
     fi
 
     if [ "$run_php" = true ]; then
@@ -1845,4 +2154,6 @@ main() {
     esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

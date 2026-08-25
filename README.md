@@ -8,9 +8,9 @@
 Script ini menyediakan beberapa opsi command:
 
 - **`help`** : Menampilkan panduan dan daftar opsi command.
-- **`setup [opsi...]`** : Melakukan setup dependensi server (PHP, Composer, Node.js, NPM, Caddy, Nginx, MariaDB Client, Fish Shell, Symlink global `/usr/local/bin/project`) serta konfigurasi mode FastCGI PHP-FPM (Unix Socket / TCP Port).
-  - Tanpa opsi: Menjalankan semua tahap secara otomatis dan membuat symlink `project` global.
-  - Opsi inklusi: `--php`, `--node`, `--web`, `--db`, `--fastcgi`, `--symlink`, `--all`.
+- **`setup [opsi...]`** : Melakukan setup dependensi server (PHP, Composer, Node.js, NPM, Caddy, Nginx, MariaDB Client, Fish Shell, Symlink global `/usr/local/bin/project`, Shell Autocompletion) serta konfigurasi mode FastCGI PHP-FPM (Unix Socket / TCP Port).
+  - Tanpa opsi: Menjalankan semua tahap secara otomatis (termasuk pembuatan symlink `project` dan autocompletion untuk Bash, Zsh, dan Fish).
+  - Opsi inklusi: `--php`, `--node`, `--web`, `--db`, `--fastcgi`, `--symlink`, `--completion`, `--all`.
   - Opsi pengecualian: `-e` atau `--except=<tahap1,tahap2>` (contoh: `--except=db` atau `-e php,fastcgi`).
 - **`create`** : Membuat user sistem terisolasi, home folder `/home/apps/<nama-aplikasi>`, database & user MySQL, serta service systemd user sesuai stack dan pilihan web server (Caddy / Nginx).
 - **`delete <nama>`** : Menghapus user sistem, direktori home aplikasi, database & user MySQL, dan service systemd user.
@@ -23,7 +23,13 @@ Script ini menyediakan beberapa opsi command:
   - `status` : Menampilkan status detail service aplikasi
 
 > [!TIP]
-> Setelah menjalankan `setup`, script otomatis membuat symlink `/usr/local/bin/project`. Anda dapat menjalankan perintah langsung dengan `sudo project <command>` dari direktori mana pun.
+> **Akses Cepat & Autocompletion Pintar**:
+> - Setelah `setup`, script otomatis terhubung secara global via `/usr/local/bin/project`. Anda dapat menjalankan `sudo project <command>` di mana saja.
+> - **Autocompletion (Tab)** didukung penuh untuk **Bash, Zsh, dan Fish**:
+>   - Ketik `sudo project ` lalu tekan `<TAB>` untuk melihat daftar command (`help`, `setup`, `create`, `delete`, `list`, `logs`, `manage`).
+>   - Ketik `sudo project c` lalu tekan `<TAB>` -> otomatis menjadi `sudo project create`.
+>   - Ketik `sudo project manage ` lalu tekan `<TAB>` -> otomatis menampilkan daftar aplikasi yang terpasang di server.
+>   - Ketik `sudo project manage myapp ` lalu tekan `<TAB>` -> otomatis memberikan pilihan aksi (`restart`, `stop`, `start`, `status`).
 
 ---
 
@@ -37,11 +43,11 @@ Script ini menyediakan beberapa opsi command:
 
 ## Alur Kerja Script
 
-### 1. `setup` (Setup Dependensi Server & FastCGI Multi-OS)
+### 1. `setup` (Setup Dependensi Server, FastCGI & Shell Completion)
 Command ini digunakan saat inisialisasi server:
 1. Mendeteksi distro Linux secara otomatis dari `/etc/os-release`.
 2. **Dukungan Opsi Tahapan**:
-   - **Tanpa opsi (`sudo ./project.sh setup`)**: Menjalankan semua tahap setup secara otomatis (Setup Lengkap termasuk pembuatan symlink `/usr/local/bin/project`).
+   - **Tanpa opsi (`sudo ./project.sh setup`)**: Menjalankan semua tahap setup secara otomatis (Setup Lengkap termasuk symlink `/usr/local/bin/project` dan autocompletion Bash/Zsh/Fish).
    - **Dengan opsi pengecualian (`--except` / `-e`)**: Menjalankan semua tahap KECUALI yang ditentukan, misalnya:
      - `sudo ./project.sh setup --except=db` : Menjalankan seluruh tahap KECUALI database/shell client.
      - `sudo ./project.sh setup -e php,fastcgi` : Menjalankan seluruh tahap KECUALI PHP dan FastCGI.
@@ -52,6 +58,7 @@ Command ini digunakan saat inisialisasi server:
      - `sudo ./project.sh setup --db` : Menginstal Fish Shell dan MariaDB/MySQL Client.
      - `sudo ./project.sh setup --fastcgi` : Konfigurasi FastCGI PHP-FPM (Unix Socket vs TCP Port).
      - `sudo ./project.sh setup --symlink` : Hanya membuat symlink `/usr/local/bin/project`.
+     - `sudo ./project.sh setup --completion` : Hanya memasang script autocompletion shell (Bash, Zsh, Fish).
      - `sudo ./project.sh setup --interactive` (atau `-i`) : Menjalankan menu interaktif pemilihan tahap.
      - **Kombinasi Opsi**: Dapat menjalankan beberapa tahap sekaligus, contoh: `sudo ./project.sh setup --php --node` atau `sudo ./project.sh setup php web`.
 
