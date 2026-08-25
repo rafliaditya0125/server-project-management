@@ -8,7 +8,7 @@
 Script ini menyediakan beberapa opsi command:
 
 - **`help`** : Menampilkan panduan dan daftar opsi command.
-- **`setup`** : Melakukan setup dependensi server (PHP, Composer, Node.js, NPM, Caddy, Nginx, MariaDB Client, Fish Shell) serta konfigurasi mode FastCGI PHP-FPM (Unix Socket / TCP Port) dengan dukungan Multi-OS otomatis.
+- **`setup [opsi...]`** : Melakukan setup dependensi server (PHP, Composer, Node.js, NPM, Caddy, Nginx, MariaDB Client, Fish Shell) serta konfigurasi mode FastCGI PHP-FPM (Unix Socket / TCP Port) dengan dukungan Multi-OS otomatis. Tanpa opsi akan menjalankan semua tahap secara otomatis, atau gunakan opsi spesifik (`--php`, `--node`, `--web`, `--db`, `--fastcgi`, `--all`).
 - **`create`** : Membuat user sistem terisolasi, home folder `/home/apps/<nama-aplikasi>`, database & user MySQL, serta service systemd user sesuai stack dan pilihan web server (Caddy / Nginx).
 - **`delete <nama>`** : Menghapus user sistem, direktori home aplikasi, database & user MySQL, dan service systemd user.
 - **`list`** : Menampilkan daftar aplikasi yang terdaftar beserta status service, web server, port, dan database terkait.
@@ -34,16 +34,16 @@ Script ini menyediakan beberapa opsi command:
 ### 1. `setup` (Setup Dependensi Server & FastCGI Multi-OS)
 Command ini digunakan saat inisialisasi server:
 1. Mendeteksi distro Linux secara otomatis dari `/etc/os-release`.
-2. Menyediakan menu interaktif:
-   - **Setup Lengkap (Rekomendasi)**: Menginstal seluruh paket kebutuhan (PHP + ekstensi lengkap, Composer, Node.js, NPM, Caddy, Nginx, MariaDB client, Fish shell) dan konfigurasi FastCGI.
-   - **Install PHP & Composer**: Menginstal runtime PHP, ekstensi (curl, pdo_mysql, mysqli, mbstring, openssl, zip, gd, intl, sodium, bcmath), dan Composer.
-   - **Install Node.js & NPM**: Menginstal runtime Node.js dan package manager NPM.
-   - **Install Web Server**: Menginstal Caddy dan Nginx.
-   - **Install Shell & DB Client**: Menginstal Fish shell dan MariaDB/MySQL client.
-   - **Konfigurasi FastCGI PHP-FPM**:
-     - Memilih mode: **Unix Socket** (misal: `/run/php/php8.3-fpm.sock` atau `/run/php-fpm/php-fpm.sock`) vs **TCP Port** (misal: `127.0.0.1:9000`).
-     - Mengaktifkan dan menjalankan service PHP-FPM (`systemctl enable --now ...`).
-     - Menyimpan konfigurasi global ke `/etc/project-manager/config.json`.
+2. **Dukungan Opsi Tahapan**:
+   - **Tanpa opsi (`sudo ./project.sh setup`)**: Menjalankan semua tahap setup secara otomatis (Setup Lengkap).
+   - **Dengan opsi tertentu**: Hanya menjalankan tahap yang dipilih, misalnya:
+     - `sudo ./project.sh setup --php` : Menginstal PHP, ekstensi umum, dan Composer.
+     - `sudo ./project.sh setup --node` : Menginstal Node.js dan NPM.
+     - `sudo ./project.sh setup --web` : Menginstal Web Server (Caddy dan Nginx).
+     - `sudo ./project.sh setup --db` : Menginstal Fish Shell dan MariaDB/MySQL Client.
+     - `sudo ./project.sh setup --fastcgi` : Konfigurasi FastCGI PHP-FPM (Unix Socket vs TCP Port).
+     - `sudo ./project.sh setup --interactive` (atau `-i`) : Menjalankan menu interaktif pemilihan tahap.
+     - **Kombinasi Opsi**: Dapat menjalankan beberapa tahap sekaligus, contoh: `sudo ./project.sh setup --php --node` atau `sudo ./project.sh setup php web`.
 
 ---
 

@@ -382,8 +382,9 @@ cmd_help() {
     echo -e "  sudo $0 [command] [argumen...]\n"
     echo -e "${BOLD}DAFTAR PERINTAH:${NC}"
     echo -e "  ${GREEN}help${NC}                   : Menampilkan daftar opsi command ini"
-    echo -e "  ${GREEN}setup${NC}                  : Setup dependensi server (PHP, Composer, Node.js, NPM,"
-    echo -e "                           Caddy, Nginx, MariaDB, Fish) & konfigurasi PHP-FPM FastCGI"
+    echo -e "  ${GREEN}setup [opsi...]${NC}        : Setup dependensi server (PHP, Composer, Node.js, NPM,"
+    echo -e "                           Caddy, Nginx, MariaDB, Fish) & konfigurasi PHP-FPM FastCGI."
+    echo -e "                           Opsi: --php, --node, --web, --db, --fastcgi, --all (default)"
     echo -e "  ${GREEN}create${NC}                 : Membuat user terisolasi, direktori home, database,"
     echo -e "                           dan konfigurasi web server/service aplikasi"
     echo -e "  ${GREEN}delete <nama>${NC}          : Menghapus user, folder home, database, dan service"
@@ -402,6 +403,28 @@ cmd_help() {
     echo -e "  - Arch Linux / Manjaro / EndeavourOS (pacman)"
     echo -e "  - Ubuntu / Debian (apt)"
     echo -e "  - Fedora / RHEL / AlmaLinux / Rocky (dnf)\n"
+}
+
+show_setup_help() {
+    echo -e "${BOLD}PENGGUNAAN:${NC}"
+    echo -e "  sudo $0 setup [opsi...]\n"
+    echo -e "${BOLD}DESKRIPSI:${NC}"
+    echo -e "  Jika tanpa opsi, semua tahap setup akan dijalankan secara otomatis."
+    echo -e "  Jika diberikan opsi, hanya tahap yang dipilih yang akan dijalankan.\n"
+    echo -e "${BOLD}DAFTAR OPSI TAHAP SETUP:${NC}"
+    echo -e "  ${GREEN}--all${NC}, ${GREEN}all${NC}               : Jalankan semua tahap setup (default)"
+    echo -e "  ${GREEN}--php${NC}, ${GREEN}php${NC}               : Install PHP, ekstensi umum, dan Composer"
+    echo -e "  ${GREEN}--node${NC}, ${GREEN}node${NC}             : Install Node.js dan NPM"
+    echo -e "  ${GREEN}--web${NC}, ${GREEN}web${NC}               : Install Web Server (Caddy & Nginx)"
+    echo -e "  ${GREEN}--db${NC}, ${GREEN}db${NC}                 : Install Fish Shell dan MariaDB/MySQL Client"
+    echo -e "  ${GREEN}--fastcgi${NC}, ${GREEN}fastcgi${NC}       : Konfigurasi koneksi PHP-FPM FastCGI (Socket / TCP)"
+    echo -e "  ${GREEN}--interactive${NC}, ${GREEN}-i${NC}        : Jalankan setup melalui menu interaktif"
+    echo -e "  ${GREEN}--help${NC}, ${GREEN}-h${NC}               : Menampilkan bantuan opsi setup ini\n"
+    echo -e "${BOLD}CONTOH PENGGUNAAN:${NC}"
+    echo -e "  sudo $0 setup                 # Menjalankan seluruh tahap"
+    echo -e "  sudo $0 setup --php           # Hanya setup PHP & Composer"
+    echo -e "  sudo $0 setup php node        # Setup PHP dan Node.js"
+    echo -e "  sudo $0 setup --web --fastcgi # Setup Web Server dan FastCGI"
 }
 
 # ------------------------------------------------------------------------------
@@ -603,11 +626,137 @@ configure_php_fpm_connection() {
 # Command: SETUP
 # ------------------------------------------------------------------------------
 cmd_setup() {
-    check_root
-    init_registry
-
     local os
     os="$(detect_os)"
+
+    local run_php=false
+    local run_node=false
+    local run_web=false
+    local run_shell_db=false
+    local run_fastcgi=false
+    local run_all=false
+    local interactive=false
+
+    if [ "$#" -eq 0 ]; then
+        run_all=true
+    else
+        for arg in "$@"; do
+            case "$arg" in
+                --help|-h|help)
+                    show_setup_help
+                    return 0
+                    ;;
+                --all|all)
+                    run_all=true
+                    ;;
+                --php|php|--composer|composer)
+                    run_php=true
+                    ;;
+                --node|node|--nodejs|nodejs|--npm|npm)
+                    run_node=true
+                    ;;
+                --web|web|--webserver|webserver|--webservers|webservers|--caddy|caddy|--nginx|nginx)
+                    run_web=true
+                    ;;
+                --db|db|--shell|shell|--shell-db|shell-db|--fish|fish|--mariadb|mariadb|--mysql|mysql)
+                    run_shell_db=true
+                    ;;
+                --fastcgi|fastcgi|--fpm|fpm|--php-fpm|php-fpm)
+                    run_fastcgi=true
+                    ;;
+                --interactive|-i|interactive)
+                    interactive=true
+                    ;;
+                *)
+                    log_error "Opsi setup '$arg' tidak dikenal."
+                    echo ""
+                    show_setup_help
+                    exit 1
+                    ;;
+            esac
+        done
+    fi
+
+    if [ "$interactive" = true ]; then
+        check_root
+        init_registry
+
+        echo -e "${BOLD}${CYAN}=================================================================${NC}"
+        echo -e "${BOLD}${CYAN}       SETUP DEPENDENSI & FASTCGI PROJECT MANAGER MULTI-OS      ${NC}"
+        echo -e "${BOLD}${CYAN}=================================================================${NC}"
+        echo -e "Distro / OS Terdeteksi : ${BOLD}${GREEN}${os}${NC} ($(uname -s -r -m))"
+        echo -e "Konfigurasi Disimpan Di: ${BOLD}${CONFIG_FILE}${NC}\n"
+
+        echo -e "Pilih menu setup yang ingin dijalankan:"
+        echo -e "  1. ${GREEN}Setup Lengkap (Semua Tahap)${NC}"
+        echo -e "     (Install PHP + Composer + Node.js + NPM + Caddy + Nginx + Fish + DB Client + Konfigurasi FastCGI)"
+        echo -e "  2. Install PHP, Ekstensi & Composer"
+        echo -e "  3. Install Node.js & NPM"
+        echo -e "  4. Install Web Server (Caddy & Nginx)"
+        echo -e "  5. Install Fish Shell & Database Client"
+        echo -e "  6. Konfigurasi PHP-FPM FastCGI (Unix Socket vs TCP Port)"
+        echo -e "  7. Keluar\n"
+
+        local setup_choice=""
+        while true; do
+            read -rp "Pilihan menu (1-7) [default: 1]: " setup_choice
+            setup_choice="${setup_choice:-1}"
+            case "$setup_choice" in
+                1)
+                    install_php_and_composer "$os"
+                    install_nodejs_and_npm "$os"
+                    install_web_servers "$os"
+                    install_shell_and_db_client "$os"
+                    configure_php_fpm_connection "$os"
+                    break
+                    ;;
+                2)
+                    install_php_and_composer "$os"
+                    break
+                    ;;
+                3)
+                    install_nodejs_and_npm "$os"
+                    break
+                    ;;
+                4)
+                    install_web_servers "$os"
+                    break
+                    ;;
+                5)
+                    install_shell_and_db_client "$os"
+                    break
+                    ;;
+                6)
+                    configure_php_fpm_connection "$os"
+                    break
+                    ;;
+                7)
+                    log_info "Keluar dari menu setup."
+                    exit 0
+                    ;;
+                *)
+                    log_error "Pilihan tidak valid. Masukkan angka antara 1 sampai 7."
+                    ;;
+            esac
+        done
+
+        echo -e "\n${BOLD}${GREEN}=================================================================${NC}"
+        echo -e "${BOLD}${GREEN}                   SETUP SELESAI DILAKUKAN                       ${NC}"
+        echo -e "${BOLD}${GREEN}=================================================================${NC}"
+        echo -e "Anda sekarang dapat menjalankan: ${BOLD}sudo $0 create${NC} untuk membuat aplikasi baru."
+        return 0
+    fi
+
+    if [ "$run_all" = true ]; then
+        run_php=true
+        run_node=true
+        run_web=true
+        run_shell_db=true
+        run_fastcgi=true
+    fi
+
+    check_root
+    init_registry
 
     echo -e "${BOLD}${CYAN}=================================================================${NC}"
     echo -e "${BOLD}${CYAN}       SETUP DEPENDENSI & FASTCGI PROJECT MANAGER MULTI-OS      ${NC}"
@@ -615,58 +764,26 @@ cmd_setup() {
     echo -e "Distro / OS Terdeteksi : ${BOLD}${GREEN}${os}${NC} ($(uname -s -r -m))"
     echo -e "Konfigurasi Disimpan Di: ${BOLD}${CONFIG_FILE}${NC}\n"
 
-    echo -e "Pilih menu setup yang ingin dijalankan:"
-    echo -e "  1. ${GREEN}Setup Lengkap (Rekomendasi)${NC}"
-    echo -e "     (Install PHP + Composer + Node.js + NPM + Caddy + Nginx + Fish + DB Client + Konfigurasi FastCGI)"
-    echo -e "  2. Install PHP, Ekstensi & Composer"
-    echo -e "  3. Install Node.js & NPM"
-    echo -e "  4. Install Web Server (Caddy & Nginx)"
-    echo -e "  5. Install Fish Shell & Database Client"
-    echo -e "  6. Konfigurasi PHP-FPM FastCGI (Unix Socket vs TCP Port)"
-    echo -e "  7. Keluar\n"
+    # Jalankan tahap-tahap yang dipilih
+    if [ "$run_php" = true ]; then
+        install_php_and_composer "$os"
+    fi
 
-    local setup_choice=""
-    while true; do
-        read -rp "Pilihan menu (1-7) [default: 1]: " setup_choice
-        setup_choice="${setup_choice:-1}"
-        case "$setup_choice" in
-            1)
-                install_php_and_composer "$os"
-                install_nodejs_and_npm "$os"
-                install_web_servers "$os"
-                install_shell_and_db_client "$os"
-                configure_php_fpm_connection "$os"
-                break
-                ;;
-            2)
-                install_php_and_composer "$os"
-                break
-                ;;
-            3)
-                install_nodejs_and_npm "$os"
-                break
-                ;;
-            4)
-                install_web_servers "$os"
-                break
-                ;;
-            5)
-                install_shell_and_db_client "$os"
-                break
-                ;;
-            6)
-                configure_php_fpm_connection "$os"
-                break
-                ;;
-            7)
-                log_info "Keluar dari menu setup."
-                exit 0
-                ;;
-            *)
-                log_error "Pilihan tidak valid. Masukkan angka antara 1 sampai 7."
-                ;;
-        esac
-    done
+    if [ "$run_node" = true ]; then
+        install_nodejs_and_npm "$os"
+    fi
+
+    if [ "$run_web" = true ]; then
+        install_web_servers "$os"
+    fi
+
+    if [ "$run_shell_db" = true ]; then
+        install_shell_and_db_client "$os"
+    fi
+
+    if [ "$run_fastcgi" = true ]; then
+        configure_php_fpm_connection "$os"
+    fi
 
     echo -e "\n${BOLD}${GREEN}=================================================================${NC}"
     echo -e "${BOLD}${GREEN}                   SETUP SELESAI DILAKUKAN                       ${NC}"
