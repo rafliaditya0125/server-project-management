@@ -383,8 +383,9 @@ cmd_help() {
     echo -e "${BOLD}DAFTAR PERINTAH:${NC}"
     echo -e "  ${GREEN}help${NC}                   : Menampilkan daftar opsi command ini"
     echo -e "  ${GREEN}setup [opsi...]${NC}        : Setup dependensi server (PHP, Composer, Node.js, NPM,"
-    echo -e "                           Caddy, Nginx, MariaDB, Fish) & konfigurasi PHP-FPM FastCGI."
-    echo -e "                           Opsi: --php, --node, --web, --db, --fastcgi, --all (default)"
+    echo -e "                           Caddy, Nginx, MariaDB, Fish, Symlink CLI) & FastCGI."
+    echo -e "                           Opsi: --php, --node, --web, --db, --fastcgi, --symlink, --all"
+    echo -e "                           Pengecualian: -e, --except=<tahap1,tahap2...>"
     echo -e "  ${GREEN}create${NC}                 : Membuat user terisolasi, direktori home, database,"
     echo -e "                           dan konfigurasi web server/service aplikasi"
     echo -e "  ${GREEN}delete <nama>${NC}          : Menghapus user, folder home, database, dan service"
@@ -410,7 +411,8 @@ show_setup_help() {
     echo -e "  sudo $0 setup [opsi...]\n"
     echo -e "${BOLD}DESKRIPSI:${NC}"
     echo -e "  Jika tanpa opsi, semua tahap setup akan dijalankan secara otomatis."
-    echo -e "  Jika diberikan opsi, hanya tahap yang dipilih yang akan dijalankan.\n"
+    echo -e "  Jika diberikan opsi tahap, hanya tahap yang dipilih yang akan dijalankan."
+    echo -e "  Gunakan flag -e atau --except untuk mengecualikan tahap tertentu.\n"
     echo -e "${BOLD}DAFTAR OPSI TAHAP SETUP:${NC}"
     echo -e "  ${GREEN}--all${NC}, ${GREEN}all${NC}               : Jalankan semua tahap setup (default)"
     echo -e "  ${GREEN}--php${NC}, ${GREEN}php${NC}               : Install PHP, ekstensi umum, dan Composer"
@@ -418,18 +420,36 @@ show_setup_help() {
     echo -e "  ${GREEN}--web${NC}, ${GREEN}web${NC}               : Install Web Server (Caddy & Nginx)"
     echo -e "  ${GREEN}--db${NC}, ${GREEN}db${NC}                 : Install Fish Shell dan MariaDB/MySQL Client"
     echo -e "  ${GREEN}--fastcgi${NC}, ${GREEN}fastcgi${NC}       : Konfigurasi koneksi PHP-FPM FastCGI (Socket / TCP)"
+    echo -e "  ${GREEN}--symlink${NC}, ${GREEN}symlink${NC}       : Buat symlink global ke /usr/local/bin/project"
+    echo -e "  ${GREEN}-e=<list>${NC}, ${GREEN}--except=<list>${NC}: Kecualikan tahap tertentu (pisahkan koma jika jamak)"
     echo -e "  ${GREEN}--interactive${NC}, ${GREEN}-i${NC}        : Jalankan setup melalui menu interaktif"
     echo -e "  ${GREEN}--help${NC}, ${GREEN}-h${NC}               : Menampilkan bantuan opsi setup ini\n"
+    echo -e "${BOLD}NAMA TAHAP UNTUK --except:${NC}"
+    echo -e "  php, composer, node, web, db, shell, fastcgi, symlink\n"
     echo -e "${BOLD}CONTOH PENGGUNAAN:${NC}"
-    echo -e "  sudo $0 setup                 # Menjalankan seluruh tahap"
-    echo -e "  sudo $0 setup --php           # Hanya setup PHP & Composer"
-    echo -e "  sudo $0 setup php node        # Setup PHP dan Node.js"
-    echo -e "  sudo $0 setup --web --fastcgi # Setup Web Server dan FastCGI"
+    echo -e "  sudo $0 setup                    # Menjalankan seluruh tahap (termasuk symlink)"
+    echo -e "  sudo $0 setup --except=db        # Menjalankan semua tahap KECUALI database/shell"
+    echo -e "  sudo $0 setup -e php,fastcgi     # Menjalankan semua KECUALI PHP & FastCGI"
+    echo -e "  sudo $0 setup --symlink          # Hanya membuat symlink /usr/local/bin/project"
+    echo -e "  sudo $0 setup php node           # Hanya install PHP dan Node.js"
+    echo -e "  sudo $0 setup --web --fastcgi    # Hanya install Web Server dan FastCGI"
 }
 
 # ------------------------------------------------------------------------------
 # Installer Functions for Setup
 # ------------------------------------------------------------------------------
+setup_cli_symlink() {
+    local script_path
+    script_path="$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || readlink -f "$0" 2>/dev/null || echo "$0")"
+
+    log_info "Membuat symlink global CLI ke /usr/local/bin/project..."
+    mkdir -p /usr/local/bin
+    chmod +x "$script_path" 2>/dev/null || true
+    ln -sf "$script_path" /usr/local/bin/project
+    log_success "Symlink global berhasil dibuat: /usr/local/bin/project -> ${script_path}"
+    log_info "Anda sekarang dapat menjalankan perintah secara langsung: 'sudo project <command>'"
+}
+
 install_php_and_composer() {
     local os="$1"
     log_info "Menginstal PHP, ekstensi umum, dan Composer untuk OS: ${os}..."
@@ -634,48 +654,85 @@ cmd_setup() {
     local run_web=false
     local run_shell_db=false
     local run_fastcgi=false
+    local run_symlink=false
     local run_all=false
+    local specific_selected=false
     local interactive=false
+    local except_list=()
 
-    if [ "$#" -eq 0 ]; then
-        run_all=true
-    else
-        for arg in "$@"; do
-            case "$arg" in
-                --help|-h|help)
-                    show_setup_help
-                    return 0
-                    ;;
-                --all|all)
-                    run_all=true
-                    ;;
-                --php|php|--composer|composer)
-                    run_php=true
-                    ;;
-                --node|node|--nodejs|nodejs|--npm|npm)
-                    run_node=true
-                    ;;
-                --web|web|--webserver|webserver|--webservers|webservers|--caddy|caddy|--nginx|nginx)
-                    run_web=true
-                    ;;
-                --db|db|--shell|shell|--shell-db|shell-db|--fish|fish|--mariadb|mariadb|--mysql|mysql)
-                    run_shell_db=true
-                    ;;
-                --fastcgi|fastcgi|--fpm|fpm|--php-fpm|php-fpm)
-                    run_fastcgi=true
-                    ;;
-                --interactive|-i|interactive)
-                    interactive=true
-                    ;;
-                *)
-                    log_error "Opsi setup '$arg' tidak dikenal."
-                    echo ""
-                    show_setup_help
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --help|-h|help)
+                show_setup_help
+                return 0
+                ;;
+            --all|all)
+                run_all=true
+                specific_selected=true
+                shift
+                ;;
+            --php|php|--composer|composer)
+                run_php=true
+                specific_selected=true
+                shift
+                ;;
+            --node|node|--nodejs|nodejs|--npm|npm)
+                run_node=true
+                specific_selected=true
+                shift
+                ;;
+            --web|web|--webserver|webserver|--webservers|webservers|--caddy|caddy|--nginx|nginx)
+                run_web=true
+                specific_selected=true
+                shift
+                ;;
+            --db|db|--shell|shell|--shell-db|shell-db|--fish|fish|--mariadb|mariadb|--mysql|mysql)
+                run_shell_db=true
+                specific_selected=true
+                shift
+                ;;
+            --fastcgi|fastcgi|--fpm|fpm|--php-fpm|php-fpm)
+                run_fastcgi=true
+                specific_selected=true
+                shift
+                ;;
+            --symlink|symlink|--bin|bin|--link|link)
+                run_symlink=true
+                specific_selected=true
+                shift
+                ;;
+            --interactive|-i|interactive)
+                interactive=true
+                shift
+                ;;
+            -e=*|--except=*)
+                local val="${1#*=}"
+                IFS=',' read -ra ADDR <<< "$val"
+                for i in "${ADDR[@]}"; do
+                    except_list+=("$i")
+                done
+                shift
+                ;;
+            -e|--except)
+                if [ -n "${2:-}" ] && [[ ! "$2" =~ ^- ]]; then
+                    IFS=',' read -ra ADDR <<< "$2"
+                    for i in "${ADDR[@]}"; do
+                        except_list+=("$i")
+                    done
+                    shift 2
+                else
+                    log_error "Flag '$1' memerlukan argumen nama tahap (contoh: --except=db atau --except db)."
                     exit 1
-                    ;;
-            esac
-        done
-    fi
+                fi
+                ;;
+            *)
+                log_error "Opsi setup '$1' tidak dikenal."
+                echo ""
+                show_setup_help
+                exit 1
+                ;;
+        esac
+    done
 
     if [ "$interactive" = true ]; then
         check_root
@@ -689,20 +746,22 @@ cmd_setup() {
 
         echo -e "Pilih menu setup yang ingin dijalankan:"
         echo -e "  1. ${GREEN}Setup Lengkap (Semua Tahap)${NC}"
-        echo -e "     (Install PHP + Composer + Node.js + NPM + Caddy + Nginx + Fish + DB Client + Konfigurasi FastCGI)"
+        echo -e "     (Symlink CLI + PHP + Composer + Node.js + NPM + Caddy + Nginx + Fish + DB Client + FastCGI)"
         echo -e "  2. Install PHP, Ekstensi & Composer"
         echo -e "  3. Install Node.js & NPM"
         echo -e "  4. Install Web Server (Caddy & Nginx)"
         echo -e "  5. Install Fish Shell & Database Client"
         echo -e "  6. Konfigurasi PHP-FPM FastCGI (Unix Socket vs TCP Port)"
-        echo -e "  7. Keluar\n"
+        echo -e "  7. Buat Symlink Global (/usr/local/bin/project)"
+        echo -e "  8. Keluar\n"
 
         local setup_choice=""
         while true; do
-            read -rp "Pilihan menu (1-7) [default: 1]: " setup_choice
+            read -rp "Pilihan menu (1-8) [default: 1]: " setup_choice
             setup_choice="${setup_choice:-1}"
             case "$setup_choice" in
                 1)
+                    setup_cli_symlink
                     install_php_and_composer "$os"
                     install_nodejs_and_npm "$os"
                     install_web_servers "$os"
@@ -731,11 +790,15 @@ cmd_setup() {
                     break
                     ;;
                 7)
+                    setup_cli_symlink
+                    break
+                    ;;
+                8)
                     log_info "Keluar dari menu setup."
                     exit 0
                     ;;
                 *)
-                    log_error "Pilihan tidak valid. Masukkan angka antara 1 sampai 7."
+                    log_error "Pilihan tidak valid. Masukkan angka antara 1 sampai 8."
                     ;;
             esac
         done
@@ -743,16 +806,50 @@ cmd_setup() {
         echo -e "\n${BOLD}${GREEN}=================================================================${NC}"
         echo -e "${BOLD}${GREEN}                   SETUP SELESAI DILAKUKAN                       ${NC}"
         echo -e "${BOLD}${GREEN}=================================================================${NC}"
-        echo -e "Anda sekarang dapat menjalankan: ${BOLD}sudo $0 create${NC} untuk membuat aplikasi baru."
+        echo -e "Anda sekarang dapat menjalankan: ${BOLD}sudo project create${NC} atau ${BOLD}sudo $0 create${NC} untuk membuat aplikasi baru."
         return 0
     fi
 
-    if [ "$run_all" = true ]; then
+    # Jika tidak ada tahap tertentu yang dipilih atau menggunakan --all, jalankan semua tahap
+    if [ "$specific_selected" = false ] || [ "$run_all" = true ]; then
+        run_symlink=true
         run_php=true
         run_node=true
         run_web=true
         run_shell_db=true
         run_fastcgi=true
+    fi
+
+    # Terapkan pengecualian dari --except / -e
+    for exc in "${except_list[@]}"; do
+        case "$exc" in
+            php|composer)
+                run_php=false
+                ;;
+            node|nodejs|npm)
+                run_node=false
+                ;;
+            web|webserver|webservers|caddy|nginx)
+                run_web=false
+                ;;
+            db|shell|shell-db|fish|mariadb|mysql)
+                run_shell_db=false
+                ;;
+            fastcgi|fpm|php-fpm)
+                run_fastcgi=false
+                ;;
+            symlink|bin|link)
+                run_symlink=false
+                ;;
+            *)
+                log_warn "Tahap pengecualian '$exc' pada --except tidak dikenal. Diabaikan."
+                ;;
+        esac
+    done
+
+    if [ "$run_symlink" = false ] && [ "$run_php" = false ] && [ "$run_node" = false ] && [ "$run_web" = false ] && [ "$run_shell_db" = false ] && [ "$run_fastcgi" = false ]; then
+        log_warn "Tidak ada tahap setup yang dijalankan karena semua tahap dikecualikan."
+        return 0
     fi
 
     check_root
@@ -765,6 +862,10 @@ cmd_setup() {
     echo -e "Konfigurasi Disimpan Di: ${BOLD}${CONFIG_FILE}${NC}\n"
 
     # Jalankan tahap-tahap yang dipilih
+    if [ "$run_symlink" = true ]; then
+        setup_cli_symlink
+    fi
+
     if [ "$run_php" = true ]; then
         install_php_and_composer "$os"
     fi
@@ -788,7 +889,7 @@ cmd_setup() {
     echo -e "\n${BOLD}${GREEN}=================================================================${NC}"
     echo -e "${BOLD}${GREEN}                   SETUP SELESAI DILAKUKAN                       ${NC}"
     echo -e "${BOLD}${GREEN}=================================================================${NC}"
-    echo -e "Anda sekarang dapat menjalankan: ${BOLD}sudo $0 create${NC} untuk membuat aplikasi baru."
+    echo -e "Anda sekarang dapat menjalankan: ${BOLD}sudo project create${NC} atau ${BOLD}sudo $0 create${NC} untuk membuat aplikasi baru."
 }
 
 # ------------------------------------------------------------------------------

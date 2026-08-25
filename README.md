@@ -8,7 +8,10 @@
 Script ini menyediakan beberapa opsi command:
 
 - **`help`** : Menampilkan panduan dan daftar opsi command.
-- **`setup [opsi...]`** : Melakukan setup dependensi server (PHP, Composer, Node.js, NPM, Caddy, Nginx, MariaDB Client, Fish Shell) serta konfigurasi mode FastCGI PHP-FPM (Unix Socket / TCP Port) dengan dukungan Multi-OS otomatis. Tanpa opsi akan menjalankan semua tahap secara otomatis, atau gunakan opsi spesifik (`--php`, `--node`, `--web`, `--db`, `--fastcgi`, `--all`).
+- **`setup [opsi...]`** : Melakukan setup dependensi server (PHP, Composer, Node.js, NPM, Caddy, Nginx, MariaDB Client, Fish Shell, Symlink global `/usr/local/bin/project`) serta konfigurasi mode FastCGI PHP-FPM (Unix Socket / TCP Port).
+  - Tanpa opsi: Menjalankan semua tahap secara otomatis dan membuat symlink `project` global.
+  - Opsi inklusi: `--php`, `--node`, `--web`, `--db`, `--fastcgi`, `--symlink`, `--all`.
+  - Opsi pengecualian: `-e` atau `--except=<tahap1,tahap2>` (contoh: `--except=db` atau `-e php,fastcgi`).
 - **`create`** : Membuat user sistem terisolasi, home folder `/home/apps/<nama-aplikasi>`, database & user MySQL, serta service systemd user sesuai stack dan pilihan web server (Caddy / Nginx).
 - **`delete <nama>`** : Menghapus user sistem, direktori home aplikasi, database & user MySQL, dan service systemd user.
 - **`list`** : Menampilkan daftar aplikasi yang terdaftar beserta status service, web server, port, dan database terkait.
@@ -18,6 +21,9 @@ Script ini menyediakan beberapa opsi command:
   - `stop` : Menghentikan service aplikasi
   - `start` : Menjalankan service aplikasi
   - `status` : Menampilkan status detail service aplikasi
+
+> [!TIP]
+> Setelah menjalankan `setup`, script otomatis membuat symlink `/usr/local/bin/project`. Anda dapat menjalankan perintah langsung dengan `sudo project <command>` dari direktori mana pun.
 
 ---
 
@@ -35,13 +41,17 @@ Script ini menyediakan beberapa opsi command:
 Command ini digunakan saat inisialisasi server:
 1. Mendeteksi distro Linux secara otomatis dari `/etc/os-release`.
 2. **Dukungan Opsi Tahapan**:
-   - **Tanpa opsi (`sudo ./project.sh setup`)**: Menjalankan semua tahap setup secara otomatis (Setup Lengkap).
-   - **Dengan opsi tertentu**: Hanya menjalankan tahap yang dipilih, misalnya:
+   - **Tanpa opsi (`sudo ./project.sh setup`)**: Menjalankan semua tahap setup secara otomatis (Setup Lengkap termasuk pembuatan symlink `/usr/local/bin/project`).
+   - **Dengan opsi pengecualian (`--except` / `-e`)**: Menjalankan semua tahap KECUALI yang ditentukan, misalnya:
+     - `sudo ./project.sh setup --except=db` : Menjalankan seluruh tahap KECUALI database/shell client.
+     - `sudo ./project.sh setup -e php,fastcgi` : Menjalankan seluruh tahap KECUALI PHP dan FastCGI.
+   - **Dengan opsi inklusi tertentu**: Hanya menjalankan tahap yang dipilih, misalnya:
      - `sudo ./project.sh setup --php` : Menginstal PHP, ekstensi umum, dan Composer.
      - `sudo ./project.sh setup --node` : Menginstal Node.js dan NPM.
      - `sudo ./project.sh setup --web` : Menginstal Web Server (Caddy dan Nginx).
      - `sudo ./project.sh setup --db` : Menginstal Fish Shell dan MariaDB/MySQL Client.
      - `sudo ./project.sh setup --fastcgi` : Konfigurasi FastCGI PHP-FPM (Unix Socket vs TCP Port).
+     - `sudo ./project.sh setup --symlink` : Hanya membuat symlink `/usr/local/bin/project`.
      - `sudo ./project.sh setup --interactive` (atau `-i`) : Menjalankan menu interaktif pemilihan tahap.
      - **Kombinasi Opsi**: Dapat menjalankan beberapa tahap sekaligus, contoh: `sudo ./project.sh setup --php --node` atau `sudo ./project.sh setup php web`.
 
