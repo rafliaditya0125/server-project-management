@@ -24,8 +24,19 @@ func TestConfigGenerator(t *testing.T) {
 		t.Fatalf("GenerateLaravelCaddyfile failed: %v", err)
 	}
 	caddyData, _ := os.ReadFile(filepath.Join(tmpDir, "Caddyfile"))
-	if !strings.Contains(string(caddyData), ":8000") || !strings.Contains(string(caddyData), "php_fastcgi unix//run/php/php8.3-fpm.sock") {
+	if !strings.Contains(string(caddyData), "admin off") || !strings.Contains(string(caddyData), ":8000") || !strings.Contains(string(caddyData), "php_fastcgi unix//run/php/php8.3-fpm.sock") {
 		t.Errorf("unexpected Caddyfile content: %s", string(caddyData))
+	}
+
+	// 1b. Caddy Node Fullstack
+	nodeTmpDir, _ := os.MkdirTemp("", "caddy_node_test_*")
+	defer os.RemoveAll(nodeTmpDir)
+	if err := gen.GenerateNodeFullstackCaddyfile(nodeTmpDir, "8000", "3000"); err != nil {
+		t.Fatalf("GenerateNodeFullstackCaddyfile failed: %v", err)
+	}
+	caddyNodeData, _ := os.ReadFile(filepath.Join(nodeTmpDir, "Caddyfile"))
+	if !strings.Contains(string(caddyNodeData), "admin off") || !strings.Contains(string(caddyNodeData), ":8000") || !strings.Contains(string(caddyNodeData), "reverse_proxy 127.0.0.1:3000") {
+		t.Errorf("unexpected Caddyfile content: %s", string(caddyNodeData))
 	}
 
 	// 2. Nginx Laravel

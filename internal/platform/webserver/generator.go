@@ -53,7 +53,11 @@ func (g *ConfigGenerator) findFastcgiParamsPath() string {
 }
 
 func (g *ConfigGenerator) GenerateLaravelCaddyfile(homeDir, portFE, fastcgiTarget string) error {
-	content := fmt.Sprintf(`:%s {
+	content := fmt.Sprintf(`{
+    admin off
+}
+
+:%s {
     root * %s/public
     php_fastcgi %s
     file_server
@@ -72,7 +76,11 @@ func (g *ConfigGenerator) GenerateNodeFullstackCaddyfile(homeDir, portFE, portBE
 		}
 	}
 
-	content := fmt.Sprintf(`:%s {
+	content := fmt.Sprintf(`{
+    admin off
+}
+
+:%s {
     root * %s
     file_server
     handle /api/* {
@@ -99,12 +107,11 @@ After=network.target
 Type=simple
 WorkingDirectory=%%h
 ExecStart=%s run --config %%h/Caddyfile
-ExecReload=%s reload --config %%h/Caddyfile
 Restart=always
 
 [Install]
 WantedBy=default.target
-`, caddyBin, caddyBin)
+`, caddyBin)
 
 	unitPath := filepath.Join(systemdDir, fmt.Sprintf("%s.service", appName))
 	return os.WriteFile(unitPath, []byte(content), 0644)
