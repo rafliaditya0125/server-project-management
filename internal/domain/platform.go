@@ -33,10 +33,12 @@ type DatabaseManager interface {
 type WebServerConfigGenerator interface {
 	GenerateLaravelCaddyfile(homeDir, portFE, fastcgiTarget string) error
 	GenerateNodeFullstackCaddyfile(homeDir, portFE, portBE string) error
+	GenerateNodeLaravelCaddyfile(homeDir, portFE, fastcgiTarget string) error
 	GenerateCaddySystemdService(systemdDir, appName string) error
 
 	GenerateLaravelNginxConfig(homeDir, portFE, fastcgiTarget string) error
 	GenerateNodeFullstackNginxConfig(homeDir, portFE, portBE string) error
+	GenerateNodeLaravelNginxConfig(homeDir, portFE, fastcgiTarget string) error
 	GenerateNginxSystemdService(systemdDir, appName string) error
 
 	GenerateNodeDirectRunScript(homeDir, portSingle string) error

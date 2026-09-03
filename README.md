@@ -48,6 +48,133 @@ Binary akan dipasang ke `/usr/local/bin/project` dan dapat dipanggil langsung: `
 
 ---
 
+## 🏗️ Stack Aplikasi yang Didukung
+
+Saat membuat aplikasi baru (`project create`), tersedia 4 pilihan stack:
+
+### 1. `laravel` — Laravel (PHP-FPM)
+Laravel monolitik yang dilayani via **FastCGI** (PHP-FPM) menggunakan Caddy atau Nginx.
+
+```
+[portFE: Caddy/Nginx]
+    └── /* ──► PHP-FPM FastCGI ──► public/index.php (Laravel)
+```
+
+**Direktori aplikasi:**
+```
+/home/apps/<nama>/
+└── public/
+    └── index.php   ← Laravel entry point
+```
+
+---
+
+### 2. `node-fullstack` — Node.js Fullstack (Static FE + API BE)
+Frontend statis Node.js (React/Vue/SPA) + Backend Node.js API, keduanya di-serve oleh satu web server melalui **reverse proxy HTTP**.
+
+```
+[portFE: Caddy/Nginx]
+    ├── /*      ──► Static files (dist/)
+    └── /api/*  ──► reverse_proxy 127.0.0.1:portBE (Node.js API)
+```
+
+**Direktori aplikasi:**
+```
+/home/apps/<nama>/
+├── dist/       ← Build output FE (React/Vue/dll)
+└── ...         ← Node.js API (portBE)
+```
+
+---
+
+### 3. `node-api` — Node.js Standalone API
+Node.js berjalan langsung sebagai server (tanpa web server wrapper). Cocok untuk microservice atau backend API murni.
+
+```
+[portSingle: Node.js langsung via run.sh]
+```
+
+**Direktori aplikasi:**
+```
+/home/apps/<nama>/
+├── run.sh           ← Script entrypoint (auto-generated)
+└── package.json     ← Atau backend/, api/, server/
+```
+
+---
+
+### 4. `node-laravel` — Node.js FE + Laravel BE (FastCGI Reverse Proxy)
+Frontend Node.js (React/Vue/SPA) + Backend **Laravel** dilayani oleh **satu web server** menggunakan teknik **reverse proxy FastCGI** — *tanpa `artisan serve`, tanpa port tambahan untuk Laravel*. Laravel diakses langsung via PHP-FPM.
+
+```
+[portFE: Caddy/Nginx]
+    ├── /*      ──► Static files (fe/dist/)          ← Node.js FE
+    └── /api/*  ──► PHP-FPM FastCGI (socket/TCP)    ← Laravel BE
+                        └── be/public/index.php
+```
+
+**Konfigurasi Caddy (`Caddyfile`):**
+```caddyfile
+{
+    admin off
+}
+
+:8080 {
+    handle /api/* {
+        uri strip_prefix /api
+        root * /home/apps/<nama>/be/public
+        php_fastcgi unix//run/php/php8.3-fpm.sock
+        file_server
+    }
+
+    handle {
+        root * /home/apps/<nama>/fe/dist
+        file_server
+        try_files {path} /index.html
+    }
+}
+```
+
+**Konfigurasi Nginx (`nginx.conf`):**
+```nginx
+server {
+    listen 8080;
+
+    location /api/ {
+        alias /home/apps/<nama>/be/public/;
+        try_files $uri /api/index.php?$query_string;
+
+        location ~ \.php$ {
+            fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+            fastcgi_param SCRIPT_FILENAME /home/apps/<nama>/be/public/index.php;
+            fastcgi_param REQUEST_URI $request_uri;
+            include /etc/nginx/fastcgi_params;
+        }
+    }
+
+    location / {
+        root /home/apps/<nama>/fe/dist;
+        index index.html;
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+**Direktori aplikasi:**
+```
+/home/apps/<nama>/
+├── fe/              ← Repo / hasil build frontend (Node.js)
+│   └── dist/
+│       └── index.html
+└── be/              ← Repo Laravel backend
+    └── public/
+        └── index.php  ← Laravel entry point
+```
+
+> **Catatan penting**: PHP-FPM harus sudah berjalan di server (`sudo systemctl start php8.x-fpm`). Jalankan `sudo project setup --php` jika belum terkonfigurasi.
+
+---
+
 ## ⚡ Autocompletion Pintar (Cobra Dynamic Completion)
 
 Auto-completion didukung penuh untuk **Bash, Zsh, dan Fish**:
@@ -76,6 +203,24 @@ Ketika dijalankan via `sudo project serve` atau `bin/project-api`:
 | `POST` | `/api/v1/setup` | Menjalankan tahapan setup server |
 | `POST` | `/api/v1/setup/fastcgi` | Mengonfigurasi koneksi FastCGI PHP-FPM |
 
+**Contoh payload `POST /api/v1/apps` untuk stack `node-laravel`:**
+```json
+{
+  "name": "myapp",
+  "user_password": "secret",
+  "stack": "node-laravel",
+  "webserver": "caddy",
+  "port_fe": "8080",
+  "php_fpm_mode": "socket",
+  "php_sock_path": "/run/php/php8.3-fpm.sock",
+  "db_name": "myapp",
+  "db_user": "myapp",
+  "db_password": "dbsecret",
+  "db_root_user": "root",
+  "db_root_password": "rootsecret"
+}
+```
+
 ---
 
 ## 🏗️ Struktur Arsitektur (Clean Architecture)
@@ -91,7 +236,7 @@ Ketika dijalankan via `sudo project serve` atau `bin/project-api`:
 │   ├── config/
 │   │   └── config.go               # Registry paths & environment variables
 │   ├── domain/                     # Core Business Entities & Interfaces
-│   │   ├── app.go
+│   │   ├── app.go                  # StackType: laravel, node-fullstack, node-api, node-laravel
 │   │   ├── config.go
 │   │   ├── errors.go
 │   │   ├── platform.go
@@ -103,7 +248,7 @@ Ketika dijalankan via `sudo project serve` atau `bin/project-api`:
 │   ├── platform/                   # Linux OS, DB, Webserver & Installer Adapters
 │   │   ├── system/                 # User management & systemd user services
 │   │   ├── database/               # MySQL / MariaDB operations
-│   │   ├── webserver/              # Caddy, Nginx, Node.js generator
+│   │   ├── webserver/              # Caddy, Nginx, Node.js generator (incl. node-laravel)
 │   │   ├── installer/              # Multi-OS package installer & FastCGI
 │   │   ├── completion/             # Shell completion installer
 │   │   ├── symlink/                # Global symlink manager

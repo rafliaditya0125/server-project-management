@@ -167,6 +167,50 @@ func (u *AppUsecase) Create(dto *domain.CreateAppDTO) (*domain.App, error) {
 			dto.WebServer = domain.WebServerCaddy
 		}
 
+	case domain.StackNodeLaravel:
+		stackName = "Node.js FE + Laravel BE (FastCGI Reverse Proxy)"
+		if err := u.validatePort(dto.PortFE); err != nil {
+			return nil, err
+		}
+		portFE = dto.PortFE
+		portSingle = dto.PortFE
+
+		if dto.PhpFpmMode == domain.PhpModePort {
+			if dto.PhpTcpPort == "" {
+				dto.PhpTcpPort = "9000"
+			}
+			if err := u.validatePort(dto.PhpTcpPort); err != nil {
+				return nil, err
+			}
+			portBE = dto.PhpTcpPort
+			caddyFastcgiTarget = fmt.Sprintf("127.0.0.1:%s", dto.PhpTcpPort)
+			nginxFastcgiTarget = fmt.Sprintf("127.0.0.1:%s", dto.PhpTcpPort)
+		} else {
+			dto.PhpFpmMode = domain.PhpModeSocket
+			if dto.PhpSockPath == "" {
+				cfg, _ := u.configRepo.Get()
+				if cfg != nil && cfg.PhpSockPath != "" {
+					dto.PhpSockPath = cfg.PhpSockPath
+				} else {
+					dto.PhpSockPath = "/run/php/php8.3-fpm.sock"
+				}
+			}
+			portBE = fmt.Sprintf("socket (%s)", dto.PhpSockPath)
+
+			cleanSock := strings.TrimPrefix(dto.PhpSockPath, "unix:")
+			cleanSock = strings.TrimPrefix(cleanSock, "unix/")
+			if strings.HasPrefix(cleanSock, "/") {
+				caddyFastcgiTarget = fmt.Sprintf("unix/%s", cleanSock)
+			} else {
+				caddyFastcgiTarget = fmt.Sprintf("unix//%s", cleanSock)
+			}
+			nginxFastcgiTarget = fmt.Sprintf("unix:%s", cleanSock)
+		}
+
+		if dto.WebServer == "" {
+			dto.WebServer = domain.WebServerCaddy
+		}
+
 	case domain.StackNodeAPI:
 		stackName = "Node.js (Standalone API Only - Direct Node Runtime)"
 		if err := u.validatePort(dto.PortSingle); err != nil {
@@ -258,6 +302,16 @@ func (u *AppUsecase) Create(dto *domain.CreateAppDTO) (*domain.App, error) {
 		} else if dto.WebServer == domain.WebServerNginx {
 			logger.Info("Membuat direktori temporary Nginx dan file nginx.conf...")
 			_ = u.webGen.GenerateNodeFullstackNginxConfig(homeDir, portFE, portBE)
+			_ = u.webGen.GenerateNginxSystemdService(systemdUserDir, dto.Name)
+		}
+	} else if dto.Stack == domain.StackNodeLaravel {
+		if dto.WebServer == domain.WebServerCaddy {
+			logger.Info("Membuat konfigurasi Caddyfile (Node.js FE + Laravel FastCGI)...")
+			_ = u.webGen.GenerateNodeLaravelCaddyfile(homeDir, portFE, caddyFastcgiTarget)
+			_ = u.webGen.GenerateCaddySystemdService(systemdUserDir, dto.Name)
+		} else if dto.WebServer == domain.WebServerNginx {
+			logger.Info("Membuat direktori temporary Nginx dan file nginx.conf (Node.js FE + Laravel FastCGI)...")
+			_ = u.webGen.GenerateNodeLaravelNginxConfig(homeDir, portFE, nginxFastcgiTarget)
 			_ = u.webGen.GenerateNginxSystemdService(systemdUserDir, dto.Name)
 		}
 	} else if dto.Stack == domain.StackNodeAPI {
@@ -384,6 +438,12 @@ func (u *AppUsecase) List() ([]domain.AppStatusInfo, error) {
 			}
 		} else if a.Stack == domain.StackNodeFullstack {
 			displayPort = fmt.Sprintf("%s/%s", a.PortFE, a.PortBE)
+		} else if a.Stack == domain.StackNodeLaravel {
+			if a.PortFE != "N/A" && a.PortFE != "" {
+				displayPort = fmt.Sprintf("%s (FE) | FastCGI (BE)", a.PortFE)
+			} else {
+				displayPort = "-"
+			}
 		} else if a.Stack == domain.StackNodeAPI {
 			if a.Port != "N/A" && a.Port != "" {
 				displayPort = a.Port

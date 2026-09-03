@@ -57,6 +57,54 @@ func TestConfigGenerator(t *testing.T) {
 		t.Errorf("unexpected run.sh content: %s", string(runScriptData))
 	}
 
+	// 1c. Caddy Node+Laravel (FastCGI Reverse Proxy)
+	nodeLaravelTmpDir, _ := os.MkdirTemp("", "caddy_node_laravel_test_*")
+	defer os.RemoveAll(nodeLaravelTmpDir)
+	if err := gen.GenerateNodeLaravelCaddyfile(nodeLaravelTmpDir, "8080", "unix//run/php/php8.3-fpm.sock"); err != nil {
+		t.Fatalf("GenerateNodeLaravelCaddyfile failed: %v", err)
+	}
+	caddyNLData, _ := os.ReadFile(filepath.Join(nodeLaravelTmpDir, "Caddyfile"))
+	caddyNLStr := string(caddyNLData)
+	if !strings.Contains(caddyNLStr, "admin off") {
+		t.Errorf("Caddyfile missing 'admin off': %s", caddyNLStr)
+	}
+	if !strings.Contains(caddyNLStr, ":8080") {
+		t.Errorf("Caddyfile missing port ':8080': %s", caddyNLStr)
+	}
+	if !strings.Contains(caddyNLStr, "handle /api/*") {
+		t.Errorf("Caddyfile missing 'handle /api/*': %s", caddyNLStr)
+	}
+	if !strings.Contains(caddyNLStr, "php_fastcgi unix//run/php/php8.3-fpm.sock") {
+		t.Errorf("Caddyfile missing php_fastcgi directive: %s", caddyNLStr)
+	}
+	if !strings.Contains(caddyNLStr, "uri strip_prefix /api") {
+		t.Errorf("Caddyfile missing uri strip_prefix: %s", caddyNLStr)
+	}
+	if !strings.Contains(caddyNLStr, "try_files {path} /index.html") {
+		t.Errorf("Caddyfile missing SPA fallback: %s", caddyNLStr)
+	}
+
+	// 2b. Nginx Node+Laravel (FastCGI Reverse Proxy)
+	nginxNLTmpDir, _ := os.MkdirTemp("", "nginx_node_laravel_test_*")
+	defer os.RemoveAll(nginxNLTmpDir)
+	if err := gen.GenerateNodeLaravelNginxConfig(nginxNLTmpDir, "8080", "unix:/run/php/php8.3-fpm.sock"); err != nil {
+		t.Fatalf("GenerateNodeLaravelNginxConfig failed: %v", err)
+	}
+	nginxNLData, _ := os.ReadFile(filepath.Join(nginxNLTmpDir, "nginx.conf"))
+	nginxNLStr := string(nginxNLData)
+	if !strings.Contains(nginxNLStr, "listen 8080;") {
+		t.Errorf("nginx.conf missing 'listen 8080;': %s", nginxNLStr)
+	}
+	if !strings.Contains(nginxNLStr, "location /api/") {
+		t.Errorf("nginx.conf missing 'location /api/': %s", nginxNLStr)
+	}
+	if !strings.Contains(nginxNLStr, "fastcgi_pass unix:/run/php/php8.3-fpm.sock;") {
+		t.Errorf("nginx.conf missing fastcgi_pass: %s", nginxNLStr)
+	}
+	if !strings.Contains(nginxNLStr, "try_files $uri $uri/ /index.html;") {
+		t.Errorf("nginx.conf missing SPA fallback: %s", nginxNLStr)
+	}
+
 	// 4. Placeholders
 	if err := gen.CreatePlaceholders(tmpDir, domain.StackLaravel, "testapp", ""); err != nil {
 		t.Fatalf("CreatePlaceholders failed: %v", err)

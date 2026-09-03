@@ -60,10 +60,11 @@ func (c *CLI) newCreateCmd() *cobra.Command {
 			fmt.Println("  1. Laravel (PHP-FPM)")
 			fmt.Println("  2. Node.js (Fullstack / Static FE + API BE)")
 			fmt.Println("  3. Node.js (Standalone API Only - Direct Node Runtime)")
+			fmt.Println("  4. Node.js FE + Laravel BE (FastCGI Reverse Proxy)")
 
 			var stackType domain.StackType
 			for {
-				choice := terminal.ReadPrompt("Pilihan (1/2/3)", "1")
+				choice := terminal.ReadPrompt("Pilihan (1/2/3/4)", "1")
 				switch choice {
 				case "1":
 					stackType = domain.StackLaravel
@@ -71,8 +72,10 @@ func (c *CLI) newCreateCmd() *cobra.Command {
 					stackType = domain.StackNodeFullstack
 				case "3":
 					stackType = domain.StackNodeAPI
+				case "4":
+					stackType = domain.StackNodeLaravel
 				default:
-					logger.Error("Pilihan tidak valid. Masukkan 1, 2, atau 3.")
+					logger.Error("Pilihan tidak valid. Masukkan 1, 2, 3, atau 4.")
 					continue
 				}
 				break
@@ -180,6 +183,46 @@ func (c *CLI) newCreateCmd() *cobra.Command {
 						break
 					}
 				}
+			} else if stackType == domain.StackNodeLaravel {
+				for {
+					portFE = terminal.ReadPrompt("Masukkan Port Web / HTTP Frontend", "8080")
+					if portFE != "" {
+						break
+					}
+				}
+
+				fmt.Println("\nPilih Mode Koneksi PHP-FPM FastCGI (untuk Laravel BE):")
+				fmt.Printf("  1. Unix Socket (Default: %s)\n", defaultSock)
+				fmt.Printf("  2. TCP Port (Default: 127.0.0.1:%s)\n", defaultPhpPort)
+
+				defaultFpmChoice := "1"
+				if cfg != nil && cfg.PhpMode == domain.PhpModePort {
+					defaultFpmChoice = "2"
+				}
+
+				fpmChoice := terminal.ReadPrompt("Pilihan Mode FastCGI (1/2)", defaultFpmChoice)
+				if fpmChoice == "2" {
+					phpMode = domain.PhpModePort
+					phpTcpPort = terminal.ReadPrompt("Masukkan Port TCP PHP-FPM", defaultPhpPort)
+				} else {
+					phpMode = domain.PhpModeSocket
+					phpSockPath = terminal.ReadPrompt("Masukkan Path Unix Socket PHP-FPM", defaultSock)
+				}
+
+				fmt.Println("\nPilih Web Server:")
+				fmt.Println("  1. Caddy (Ringkas & zero-temp folder)")
+				fmt.Println("  2. Nginx (User-space instance)")
+				for {
+					wsChoice := terminal.ReadPrompt("Pilihan Web Server (1/2)", "1")
+					if wsChoice == "1" {
+						webServer = domain.WebServerCaddy
+						break
+					} else if wsChoice == "2" {
+						webServer = domain.WebServerNginx
+						break
+					}
+					logger.Error("Pilihan tidak valid. Masukkan 1 atau 2.")
+				}
 			}
 
 			// 6. Database Inputs
@@ -240,6 +283,12 @@ func (c *CLI) newCreateCmd() *cobra.Command {
 				fmt.Printf("  - Web Server     : %s\n", createdApp.WebServer)
 				fmt.Printf("  - Port Frontend  : %s%s%s\n", logger.ColorBold, createdApp.PortFE, logger.ColorReset)
 				fmt.Printf("  - Port Backend   : %s%s%s\n", logger.ColorBold, createdApp.PortBE, logger.ColorReset)
+			} else if createdApp.Stack == domain.StackNodeLaravel {
+				fmt.Printf("  - Web Server     : %s\n", createdApp.WebServer)
+				fmt.Printf("  - Port Web/HTTP  : %s%s%s\n", logger.ColorBold, createdApp.PortFE, logger.ColorReset)
+				fmt.Printf("  - FastCGI BE     : %s%s%s\n", logger.ColorBold, createdApp.PortBE, logger.ColorReset)
+				fmt.Printf("  - Direktori FE   : %s/fe/dist/\n", createdApp.Home)
+				fmt.Printf("  - Direktori BE   : %s/be/public/\n", createdApp.Home)
 			} else if createdApp.Stack == domain.StackNodeAPI {
 				fmt.Printf("  - Port Aplikasi  : %s%s%s\n", logger.ColorBold, createdApp.Port, logger.ColorReset)
 			}

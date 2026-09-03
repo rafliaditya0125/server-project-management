@@ -49,8 +49,9 @@ STACK YANG DIDUKUNG:
   1. Laravel (PHP-FPM: Unix Socket / TCP Port)
   2. Node.js (Fullstack / Static FE + API BE)
   3. Node.js (Standalone API Only - Direct Node Runtime)
+  4. Node.js FE + Laravel BE (FastCGI Reverse Proxy)
 
-WEB SERVER YANG DIDUKUNG (Stack 1 & 2):
+WEB SERVER YANG DIDUKUNG (Stack 1, 2 & 4):
   1. Caddy (Ringkas & zero-temp folder)
   2. Nginx (User-space instance)
 

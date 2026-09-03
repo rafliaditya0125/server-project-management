@@ -93,6 +93,41 @@ func (g *ConfigGenerator) GenerateNodeFullstackCaddyfile(homeDir, portFE, portBE
 	return os.WriteFile(filepath.Join(homeDir, "Caddyfile"), []byte(content), 0644)
 }
 
+func (g *ConfigGenerator) GenerateNodeLaravelCaddyfile(homeDir, portFE, fastcgiTarget string) error {
+	feRoot := filepath.Join(homeDir, "fe", "dist")
+	if _, err := os.Stat(feRoot); os.IsNotExist(err) {
+		feRoot = filepath.Join(homeDir, "dist")
+	}
+	bePublic := filepath.Join(homeDir, "be", "public")
+	if _, err := os.Stat(bePublic); os.IsNotExist(err) {
+		bePublic = filepath.Join(homeDir, "public")
+	}
+
+	content := fmt.Sprintf(`{
+    admin off
+}
+
+:%s {
+    # /api/* -> FastCGI -> Laravel public/index.php
+    handle /api/* {
+        uri strip_prefix /api
+        root * %s
+        php_fastcgi %s
+        file_server
+    }
+
+    # /* -> Node.js FE static files + SPA fallback
+    handle {
+        root * %s
+        file_server
+        try_files {path} /index.html
+    }
+}
+`, portFE, bePublic, fastcgiTarget, feRoot)
+
+	return os.WriteFile(filepath.Join(homeDir, "Caddyfile"), []byte(content), 0644)
+}
+
 func (g *ConfigGenerator) GenerateCaddySystemdService(systemdDir, appName string) error {
 	if err := os.MkdirAll(systemdDir, 0755); err != nil {
 		return err
@@ -231,6 +266,75 @@ http {
 	return os.WriteFile(filepath.Join(homeDir, "nginx.conf"), []byte(content), 0644)
 }
 
+func (g *ConfigGenerator) GenerateNodeLaravelNginxConfig(homeDir, portFE, fastcgiTarget string) error {
+	// Create tmp directories
+	for _, d := range []string{"client_body", "proxy", "fastcgi", "uwsgi", "scgi"} {
+		if err := os.MkdirAll(filepath.Join(homeDir, "tmp", d), 0755); err != nil {
+			return err
+		}
+	}
+
+	feRoot := filepath.Join(homeDir, "fe", "dist")
+	if _, err := os.Stat(feRoot); os.IsNotExist(err) {
+		feRoot = filepath.Join(homeDir, "dist")
+	}
+	bePublic := filepath.Join(homeDir, "be", "public")
+	if _, err := os.Stat(bePublic); os.IsNotExist(err) {
+		bePublic = filepath.Join(homeDir, "public")
+	}
+
+	mimeTypes := g.findMimeTypesPath()
+	fastcgiParams := g.findFastcgiParamsPath()
+
+	content := fmt.Sprintf(`worker_processes 1;
+pid %s/tmp/nginx.pid;
+error_log %s/tmp/error.log;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include %s;
+    default_type application/octet-stream;
+    access_log %s/tmp/access.log;
+
+    client_body_temp_path %s/tmp/client_body;
+    proxy_temp_path %s/tmp/proxy;
+    fastcgi_temp_path %s/tmp/fastcgi;
+    uwsgi_temp_path %s/tmp/uwsgi;
+    scgi_temp_path %s/tmp/scgi;
+
+    server {
+        listen %s;
+        server_name _;
+
+        # /api/* -> FastCGI -> Laravel public/index.php
+        location /api/ {
+            alias %s/;
+            try_files $uri /api/index.php?$query_string;
+
+            location ~ \.php$ {
+                fastcgi_pass %s;
+                fastcgi_param SCRIPT_FILENAME %s/index.php;
+                fastcgi_param REQUEST_URI $request_uri;
+                include %s;
+            }
+        }
+
+        # /* -> Node.js FE static files + SPA fallback
+        location / {
+            root %s;
+            index index.html;
+            try_files $uri $uri/ /index.html;
+        }
+    }
+}
+`, homeDir, homeDir, mimeTypes, homeDir, homeDir, homeDir, homeDir, homeDir, homeDir, portFE, bePublic, fastcgiTarget, bePublic, fastcgiParams, feRoot)
+
+	return os.WriteFile(filepath.Join(homeDir, "nginx.conf"), []byte(content), 0644)
+}
+
 func (g *ConfigGenerator) GenerateNginxSystemdService(systemdDir, appName string) error {
 	if err := os.MkdirAll(systemdDir, 0755); err != nil {
 		return err
@@ -356,6 +460,31 @@ func (g *ConfigGenerator) CreatePlaceholders(homeDir string, stack domain.StackT
 </html>
 `, appName, appName, portBE)
 			_ = os.WriteFile(indexPath, []byte(content), 0644)
+		}
+	case domain.StackNodeLaravel:
+		// FE placeholder: fe/dist/index.html
+		feDistDir := filepath.Join(homeDir, "fe", "dist")
+		_ = os.MkdirAll(feDistDir, 0755)
+		feIndexPath := filepath.Join(feDistDir, "index.html")
+		if _, err := os.Stat(feIndexPath); os.IsNotExist(err) {
+			content := fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head><title>%s</title></head>
+<body>
+<h1>Aplikasi Node.js FE (%s) Siap</h1>
+<p>Frontend Static. API Laravel tersedia di <code>/api/*</code>.</p>
+</body>
+</html>
+`, appName, appName)
+			_ = os.WriteFile(feIndexPath, []byte(content), 0644)
+		}
+		// BE placeholder: be/public/index.php
+		bePublicDir := filepath.Join(homeDir, "be", "public")
+		_ = os.MkdirAll(bePublicDir, 0755)
+		beIndexPath := filepath.Join(bePublicDir, "index.php")
+		if _, err := os.Stat(beIndexPath); os.IsNotExist(err) {
+			content := fmt.Sprintf("<?php\necho \"<h1>Laravel BE (%s) Siap</h1><p>Menunggu deployment di direktori be/.</p>\";\n", appName)
+			_ = os.WriteFile(beIndexPath, []byte(content), 0644)
 		}
 	}
 	return nil

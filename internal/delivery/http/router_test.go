@@ -116,6 +116,9 @@ func (m *mockWebGen) GenerateLaravelCaddyfile(h, p, f string) error {
 func (m *mockWebGen) GenerateNodeFullstackCaddyfile(h, p, b string) error {
 	return nil
 }
+func (m *mockWebGen) GenerateNodeLaravelCaddyfile(h, p, f string) error {
+	return nil
+}
 func (m *mockWebGen) GenerateCaddySystemdService(s, a string) error {
 	return nil
 }
@@ -123,6 +126,9 @@ func (m *mockWebGen) GenerateLaravelNginxConfig(h, p, f string) error {
 	return nil
 }
 func (m *mockWebGen) GenerateNodeFullstackNginxConfig(h, p, b string) error {
+	return nil
+}
+func (m *mockWebGen) GenerateNodeLaravelNginxConfig(h, p, f string) error {
 	return nil
 }
 func (m *mockWebGen) GenerateNginxSystemdService(s, a string) error {

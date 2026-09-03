@@ -137,6 +137,9 @@ func (m *mockWebGen) GenerateLaravelCaddyfile(homeDir, portFE, fastcgiTarget str
 func (m *mockWebGen) GenerateNodeFullstackCaddyfile(homeDir, portFE, portBE string) error {
 	return nil
 }
+func (m *mockWebGen) GenerateNodeLaravelCaddyfile(homeDir, portFE, fastcgiTarget string) error {
+	return nil
+}
 func (m *mockWebGen) GenerateCaddySystemdService(systemdDir, appName string) error {
 	return nil
 }
@@ -144,6 +147,9 @@ func (m *mockWebGen) GenerateLaravelNginxConfig(homeDir, portFE, fastcgiTarget s
 	return nil
 }
 func (m *mockWebGen) GenerateNodeFullstackNginxConfig(homeDir, portFE, portBE string) error {
+	return nil
+}
+func (m *mockWebGen) GenerateNodeLaravelNginxConfig(homeDir, portFE, fastcgiTarget string) error {
 	return nil
 }
 func (m *mockWebGen) GenerateNginxSystemdService(systemdDir, appName string) error {
