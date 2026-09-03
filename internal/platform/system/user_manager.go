@@ -60,7 +60,36 @@ func (s *SystemManager) CreateUser(username, password, homeDir, shellPath string
 		return fmt.Errorf("chpasswd failed: %s (%w)", string(out), err)
 	}
 
+	// 3. Setup Shell profile agar $XDG_RUNTIME_DIR otomatis terpasang saat su/login
+	s.setupUserShellProfile(homeDir)
+
 	return nil
+}
+
+func (s *SystemManager) setupUserShellProfile(homeDir string) {
+	// Fish config
+	fishConfDir := filepath.Join(homeDir, ".config", "fish")
+	_ = os.MkdirAll(fishConfDir, 0755)
+	fishConfPath := filepath.Join(fishConfDir, "config.fish")
+	fishSnippet := "\n# Auto-export XDG_RUNTIME_DIR for user systemd session\nif test -z \"$XDG_RUNTIME_DIR\"\n    set -x XDG_RUNTIME_DIR /run/user/(id -u)\nend\n"
+	if data, err := os.ReadFile(fishConfPath); err == nil {
+		if !strings.Contains(string(data), "XDG_RUNTIME_DIR") {
+			_ = os.WriteFile(fishConfPath, append(data, []byte(fishSnippet)...), 0644)
+		}
+	} else {
+		_ = os.WriteFile(fishConfPath, []byte(fishSnippet), 0644)
+	}
+
+	// Bash config
+	bashrcPath := filepath.Join(homeDir, ".bashrc")
+	bashSnippet := "\n# Auto-export XDG_RUNTIME_DIR for user systemd session\nif [ -z \"$XDG_RUNTIME_DIR\" ]; then\n    export XDG_RUNTIME_DIR=/run/user/$(id -u)\nfi\n"
+	if data, err := os.ReadFile(bashrcPath); err == nil {
+		if !strings.Contains(string(data), "XDG_RUNTIME_DIR") {
+			_ = os.WriteFile(bashrcPath, append(data, []byte(bashSnippet)...), 0644)
+		}
+	} else {
+		_ = os.WriteFile(bashrcPath, []byte(bashSnippet), 0644)
+	}
 }
 
 func (s *SystemManager) DeleteUser(username string, removeHome bool) error {
@@ -141,8 +170,14 @@ func (s *SystemManager) RunSystemctlUser(username string, action string, service
 		return "", fmt.Errorf("user lookup failed: %w", err)
 	}
 
-	// 1. Try systemctl --user -M <username>@ <action> <serviceName>
-	cmd1 := exec.Command("systemctl", "--user", "-M", fmt.Sprintf("%s@", username), action, serviceName)
+	// Build arguments: do not append empty serviceName
+	baseArgs := []string{"--user", "-M", fmt.Sprintf("%s@.host", username), action}
+	if serviceName != "" {
+		baseArgs = append(baseArgs, serviceName)
+	}
+
+	// 1. Try systemctl --user -M <username>@.host <action> [serviceName]
+	cmd1 := exec.Command("systemctl", baseArgs...)
 	var out1 bytes.Buffer
 	var errOut1 bytes.Buffer
 	cmd1.Stdout = &out1
@@ -154,12 +189,15 @@ func (s *SystemManager) RunSystemctlUser(username string, action string, service
 	// 2. Fallback via XDG_RUNTIME_DIR and runuser
 	runtimeDir := fmt.Sprintf("/run/user/%s", u.Uid)
 	if _, statErr := os.Stat(runtimeDir); statErr == nil {
-		busAddress := fmt.Sprintf("unix:path=%s/bus", runtimeDir)
-		cmd2 := exec.Command("runuser", "-u", username, "--", "env",
+		runuserArgs := []string{
+			"-u", username, "--", "env",
 			fmt.Sprintf("XDG_RUNTIME_DIR=%s", runtimeDir),
-			fmt.Sprintf("DBUS_SESSION_BUS_ADDRESS=%s", busAddress),
-			"systemctl", "--user", action, serviceName,
-		)
+			"systemctl", "--user", action,
+		}
+		if serviceName != "" {
+			runuserArgs = append(runuserArgs, serviceName)
+		}
+		cmd2 := exec.Command("runuser", runuserArgs...)
 		var out2 bytes.Buffer
 		cmd2.Stdout = &out2
 		if err := cmd2.Run(); err == nil {
@@ -168,7 +206,11 @@ func (s *SystemManager) RunSystemctlUser(username string, action string, service
 	}
 
 	// 3. Fallback standard runuser
-	cmd3 := exec.Command("runuser", "-u", username, "--", "systemctl", "--user", action, serviceName)
+	cmd3Args := []string{"-u", username, "--", "systemctl", "--user", action}
+	if serviceName != "" {
+		cmd3Args = append(cmd3Args, serviceName)
+	}
+	cmd3 := exec.Command("runuser", cmd3Args...)
 	var out3 bytes.Buffer
 	cmd3.Stdout = &out3
 	if err := cmd3.Run(); err == nil {
@@ -179,11 +221,56 @@ func (s *SystemManager) RunSystemctlUser(username string, action string, service
 }
 
 func (s *SystemManager) IsServiceActive(username string, serviceName string) bool {
-	out, err := s.RunSystemctlUser(username, "is-active", serviceName)
+	u, err := user.Lookup(username)
 	if err != nil {
 		return false
 	}
-	return strings.TrimSpace(out) == "active"
+
+	// 1. Cek langsung via cgroup v2 (/sys/fs/cgroup)
+	// Sangat cepat, akurat, dan bisa dibaca oleh user non-root maupun root tanpa D-Bus permission error!
+	cgroupProcsPath := fmt.Sprintf("/sys/fs/cgroup/user.slice/user-%s.slice/user@%s.service/app.slice/%s/cgroup.procs", u.Uid, u.Uid, serviceName)
+	if data, err := os.ReadFile(cgroupProcsPath); err == nil {
+		if len(bytes.TrimSpace(data)) > 0 {
+			return true
+		}
+	}
+
+	checkActive := func(out string) bool {
+		return strings.Contains(out, "ActiveState=active")
+	}
+
+	// 2. systemctl show via machinectl (-M username@.host)
+	cmd1 := exec.Command("systemctl", "--user", "-M", fmt.Sprintf("%s@.host", username),
+		"show", "--property=ActiveState", serviceName)
+	if out, err := cmd1.Output(); err == nil {
+		if checkActive(string(out)) {
+			return true
+		}
+	}
+
+	// 3. Fallback via XDG_RUNTIME_DIR + runuser
+	runtimeDir := fmt.Sprintf("/run/user/%s", u.Uid)
+	if _, statErr := os.Stat(runtimeDir); statErr == nil {
+		cmd2 := exec.Command("runuser", "-u", username, "--", "env",
+			fmt.Sprintf("XDG_RUNTIME_DIR=%s", runtimeDir),
+			"systemctl", "--user", "show", "--property=ActiveState", serviceName,
+		)
+		if out, err := cmd2.Output(); err == nil {
+			if checkActive(string(out)) {
+				return true
+			}
+		}
+	}
+
+	// 4. Fallback is-active via machinectl
+	cmd3 := exec.Command("systemctl", "--user", "-M", fmt.Sprintf("%s@.host", username),
+		"is-active", serviceName)
+	out3, _ := cmd3.Output()
+	if strings.TrimSpace(string(out3)) == "active" {
+		return true
+	}
+
+	return false
 }
 
 func (s *SystemManager) GetJournalLogs(username string, serviceName string, lines int) (string, error) {
@@ -191,7 +278,7 @@ func (s *SystemManager) GetJournalLogs(username string, serviceName string, line
 		lines = 100
 	}
 
-	cmd1 := exec.Command("journalctl", "--user", "-M", fmt.Sprintf("%s@", username), "-u", serviceName, "-n", strconv.Itoa(lines), "--no-pager")
+	cmd1 := exec.Command("journalctl", "--user", "-M", fmt.Sprintf("%s@.host", username), "-u", serviceName, "-n", strconv.Itoa(lines), "--no-pager")
 	out1, err1 := cmd1.CombinedOutput()
 	if err1 == nil && len(out1) > 0 {
 		return string(out1), nil
