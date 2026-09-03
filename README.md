@@ -30,6 +30,14 @@ Binary akan dipasang ke `/usr/local/bin/project` dan dapat dipanggil langsung: `
 
 ---
 
+## 📚 Panduan Alur Kerja (Workflow)
+
+Untuk panduan operasional langkah-demi-langkah yang mendalam, silakan baca dokumentasi berikut:
+- 🛠️ [**Workflow Administrator**](docs/workflow-admin.md): Panduan setup server, inisialisasi project (`project create`), penentuan 4 stack, template handoff kredensial, monitoring, dan teardown.
+- 🚀 [**Workflow Developer**](docs/workflow-developer.md): Panduan developer sejak menerima kredensial, koneksi SSH, penataan kode & deployment sesuai 4 stack, manajemen service user, hingga aplikasi dapat diakses publik.
+
+---
+
 ## 📌 Daftar Perintah CLI
 
 - **`help`** : Menampilkan panduan dan daftar opsi command.
