@@ -140,6 +140,18 @@ func (m *mockWebGen) GenerateNodeDirectRunScript(h, p string) error {
 func (m *mockWebGen) GenerateNodeDirectSystemdService(s, a, p string) error {
 	return nil
 }
+func (m *mockWebGen) GeneratePythonDirectRunScript(h, p string) error {
+	return nil
+}
+func (m *mockWebGen) GeneratePythonDirectSystemdService(s, a, p string) error {
+	return nil
+}
+func (m *mockWebGen) GenerateNodePythonCaddyfile(h, fe, be string) error {
+	return nil
+}
+func (m *mockWebGen) GenerateNodePythonNginxConfig(h, fe, be string) error {
+	return nil
+}
 func (m *mockWebGen) CreatePlaceholders(h string, s domain.StackType, a, p string) error {
 	return nil
 }
@@ -168,6 +180,9 @@ func (m *mockPkgInstaller) InstallPHPAndComposer(o string) error {
 	return nil
 }
 func (m *mockPkgInstaller) InstallNodeAndNPM(o string) error {
+	return nil
+}
+func (m *mockPkgInstaller) InstallPythonAndPip(o string) error {
 	return nil
 }
 func (m *mockPkgInstaller) InstallWebServers(o string) error {

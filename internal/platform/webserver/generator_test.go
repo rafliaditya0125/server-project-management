@@ -105,11 +105,73 @@ func TestConfigGenerator(t *testing.T) {
 		t.Errorf("nginx.conf missing SPA fallback: %s", nginxNLStr)
 	}
 
+	// 1d. Caddy Node+Python (Reverse Proxy /api/*)
+	nodePythonTmpDir, _ := os.MkdirTemp("", "caddy_node_python_test_*")
+	defer os.RemoveAll(nodePythonTmpDir)
+	if err := gen.GenerateNodePythonCaddyfile(nodePythonTmpDir, "8080", "8001"); err != nil {
+		t.Fatalf("GenerateNodePythonCaddyfile failed: %v", err)
+	}
+	caddyNPyData, _ := os.ReadFile(filepath.Join(nodePythonTmpDir, "Caddyfile"))
+	caddyNPyStr := string(caddyNPyData)
+	if !strings.Contains(caddyNPyStr, ":8080") || !strings.Contains(caddyNPyStr, "reverse_proxy 127.0.0.1:8001") || !strings.Contains(caddyNPyStr, "handle /api/*") {
+		t.Errorf("unexpected Node-Python Caddyfile: %s", caddyNPyStr)
+	}
+
+	// 2c. Nginx Node+Python (Reverse Proxy /api)
+	nginxPyTmpDir, _ := os.MkdirTemp("", "nginx_node_python_test_*")
+	defer os.RemoveAll(nginxPyTmpDir)
+	if err := gen.GenerateNodePythonNginxConfig(nginxPyTmpDir, "8080", "8001"); err != nil {
+		t.Fatalf("GenerateNodePythonNginxConfig failed: %v", err)
+	}
+	nginxPyData, _ := os.ReadFile(filepath.Join(nginxPyTmpDir, "nginx.conf"))
+	nginxPyStr := string(nginxPyData)
+	if !strings.Contains(nginxPyStr, "listen 8080;") || !strings.Contains(nginxPyStr, "proxy_pass http://127.0.0.1:8001;") {
+		t.Errorf("unexpected Node-Python nginx.conf: %s", nginxPyStr)
+	}
+
+	// 3b. Python Direct run.sh
+	pyTmpDir, _ := os.MkdirTemp("", "python_direct_test_*")
+	defer os.RemoveAll(pyTmpDir)
+	if err := gen.GeneratePythonDirectRunScript(pyTmpDir, "8001"); err != nil {
+		t.Fatalf("GeneratePythonDirectRunScript failed: %v", err)
+	}
+	pyRunData, _ := os.ReadFile(filepath.Join(pyTmpDir, "run.sh"))
+	if !strings.Contains(string(pyRunData), "8001") || !strings.Contains(string(pyRunData), ".venv/bin/activate") {
+		t.Errorf("unexpected Python run.sh content: %s", string(pyRunData))
+	}
+
+	// 3c. Python Direct systemd service
+	if err := gen.GeneratePythonDirectSystemdService(pyTmpDir, "testpy", "8001"); err != nil {
+		t.Fatalf("GeneratePythonDirectSystemdService failed: %v", err)
+	}
+	pySvcData, _ := os.ReadFile(filepath.Join(pyTmpDir, "testpy.service"))
+	if !strings.Contains(string(pySvcData), "Environment=PORT=8001") || !strings.Contains(string(pySvcData), "PYTHONUNBUFFERED=1") {
+		t.Errorf("unexpected Python systemd service content: %s", string(pySvcData))
+	}
+
 	// 4. Placeholders
 	if err := gen.CreatePlaceholders(tmpDir, domain.StackLaravel, "testapp", ""); err != nil {
 		t.Fatalf("CreatePlaceholders failed: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(tmpDir, "public", "index.php")); err != nil {
 		t.Errorf("index.php placeholder missing: %v", err)
+	}
+
+	// 4b. Python Placeholders
+	if err := gen.CreatePlaceholders(pyTmpDir, domain.StackPythonAPI, "testpy", "8001"); err != nil {
+		t.Fatalf("CreatePlaceholders Python failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(pyTmpDir, "run.sh")); err != nil {
+		t.Errorf("run.sh placeholder missing: %v", err)
+	}
+
+	if err := gen.CreatePlaceholders(nodePythonTmpDir, domain.StackNodePython, "testnodepy", "8001"); err != nil {
+		t.Fatalf("CreatePlaceholders NodePython failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(nodePythonTmpDir, "fe", "dist", "index.html")); err != nil {
+		t.Errorf("Node-Python fe index.html placeholder missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(nodePythonTmpDir, "be", "run.sh")); err != nil {
+		t.Errorf("Node-Python be run.sh placeholder missing: %v", err)
 	}
 }

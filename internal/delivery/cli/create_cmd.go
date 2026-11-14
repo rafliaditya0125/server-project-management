@@ -61,10 +61,12 @@ func (c *CLI) newCreateCmd() *cobra.Command {
 			fmt.Println("  2. Node.js (Fullstack / Static FE + API BE)")
 			fmt.Println("  3. Node.js (Standalone API Only - Direct Node Runtime)")
 			fmt.Println("  4. Node.js FE + Laravel BE (FastCGI Reverse Proxy)")
+			fmt.Println("  5. Python (Standalone API Only - Direct Python Runtime)")
+			fmt.Println("  6. Node.js FE + Python BE (Reverse Proxy)")
 
 			var stackType domain.StackType
 			for {
-				choice := terminal.ReadPrompt("Pilihan (1/2/3/4)", "1")
+				choice := terminal.ReadPrompt("Pilihan (1/2/3/4/5/6)", "1")
 				switch choice {
 				case "1":
 					stackType = domain.StackLaravel
@@ -74,8 +76,12 @@ func (c *CLI) newCreateCmd() *cobra.Command {
 					stackType = domain.StackNodeAPI
 				case "4":
 					stackType = domain.StackNodeLaravel
+				case "5":
+					stackType = domain.StackPythonAPI
+				case "6":
+					stackType = domain.StackNodePython
 				default:
-					logger.Error("Pilihan tidak valid. Masukkan 1, 2, 3, atau 4.")
+					logger.Error("Pilihan tidak valid. Masukkan 1, 2, 3, 4, 5, atau 6.")
 					continue
 				}
 				break
@@ -223,6 +229,45 @@ func (c *CLI) newCreateCmd() *cobra.Command {
 					}
 					logger.Error("Pilihan tidak valid. Masukkan 1 atau 2.")
 				}
+			} else if stackType == domain.StackPythonAPI {
+				for {
+					portSingle = terminal.ReadPrompt("Masukkan Port Aplikasi Python", "8001")
+					if portSingle != "" {
+						break
+					}
+				}
+			} else if stackType == domain.StackNodePython {
+				for {
+					portFE = terminal.ReadPrompt("Masukkan Port Web / HTTP Frontend", "8080")
+					if portFE != "" {
+						break
+					}
+				}
+				for {
+					portBE = terminal.ReadPrompt("Masukkan Port Backend Python API", "8001")
+					if portBE == portFE {
+						logger.Error("Port Backend API tidak boleh sama dengan Port Frontend.")
+						continue
+					}
+					if portBE != "" {
+						break
+					}
+				}
+
+				fmt.Println("\nPilih Web Server:")
+				fmt.Println("  1. Caddy (Ringkas & zero-temp folder)")
+				fmt.Println("  2. Nginx (User-space instance)")
+				for {
+					wsChoice := terminal.ReadPrompt("Pilihan Web Server (1/2)", "1")
+					if wsChoice == "1" {
+						webServer = domain.WebServerCaddy
+						break
+					} else if wsChoice == "2" {
+						webServer = domain.WebServerNginx
+						break
+					}
+					logger.Error("Pilihan tidak valid. Masukkan 1 atau 2.")
+				}
 			}
 
 			// 6. Database Inputs
@@ -291,6 +336,16 @@ func (c *CLI) newCreateCmd() *cobra.Command {
 				fmt.Printf("  - Direktori BE   : %s/be/public/\n", createdApp.Home)
 			} else if createdApp.Stack == domain.StackNodeAPI {
 				fmt.Printf("  - Port Aplikasi  : %s%s%s\n", logger.ColorBold, createdApp.Port, logger.ColorReset)
+			} else if createdApp.Stack == domain.StackPythonAPI {
+				fmt.Printf("  - Runtime        : Python (Direct Runtime via run.sh)\n")
+				fmt.Printf("  - Port Aplikasi  : %s%s%s\n", logger.ColorBold, createdApp.Port, logger.ColorReset)
+				fmt.Printf("  - Script Runner  : %s/run.sh\n", createdApp.Home)
+			} else if createdApp.Stack == domain.StackNodePython {
+				fmt.Printf("  - Web Server     : %s\n", createdApp.WebServer)
+				fmt.Printf("  - Port Frontend  : %s%s%s\n", logger.ColorBold, createdApp.PortFE, logger.ColorReset)
+				fmt.Printf("  - Port Python BE : %s%s%s (Reverse Proxy di /api/*)\n", logger.ColorBold, createdApp.PortBE, logger.ColorReset)
+				fmt.Printf("  - Direktori FE   : %s/fe/dist/\n", createdApp.Home)
+				fmt.Printf("  - Direktori BE   : %s/be/ (dengan run.sh)\n", createdApp.Home)
 			}
 			fmt.Printf("  - Database Name  : %s\n", createdApp.DBName)
 			fmt.Printf("  - Database User  : %s\n", createdApp.DBUser)

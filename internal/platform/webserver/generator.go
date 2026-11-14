@@ -128,6 +128,34 @@ func (g *ConfigGenerator) GenerateNodeLaravelCaddyfile(homeDir, portFE, fastcgiT
 	return os.WriteFile(filepath.Join(homeDir, "Caddyfile"), []byte(content), 0644)
 }
 
+func (g *ConfigGenerator) GenerateNodePythonCaddyfile(homeDir, portFE, portBE string) error {
+	feRoot := filepath.Join(homeDir, "fe", "dist")
+	if _, err := os.Stat(feRoot); os.IsNotExist(err) {
+		feRoot = filepath.Join(homeDir, "dist")
+		if _, errPublic := os.Stat(filepath.Join(homeDir, "public")); errPublic == nil {
+			feRoot = filepath.Join(homeDir, "public")
+		}
+	}
+
+	content := fmt.Sprintf(`{
+    admin off
+}
+
+:%s {
+    root * %s
+    file_server
+
+    handle /api/* {
+        reverse_proxy 127.0.0.1:%s
+    }
+
+    try_files {path} /index.html
+}
+`, portFE, feRoot, portBE)
+
+	return os.WriteFile(filepath.Join(homeDir, "Caddyfile"), []byte(content), 0644)
+}
+
 func (g *ConfigGenerator) GenerateCaddySystemdService(systemdDir, appName string) error {
 	if err := os.MkdirAll(systemdDir, 0755); err != nil {
 		return err
@@ -335,6 +363,68 @@ http {
 	return os.WriteFile(filepath.Join(homeDir, "nginx.conf"), []byte(content), 0644)
 }
 
+func (g *ConfigGenerator) GenerateNodePythonNginxConfig(homeDir, portFE, portBE string) error {
+	// Create tmp directories
+	for _, d := range []string{"client_body", "proxy", "fastcgi", "uwsgi", "scgi"} {
+		if err := os.MkdirAll(filepath.Join(homeDir, "tmp", d), 0755); err != nil {
+			return err
+		}
+	}
+
+	feRoot := filepath.Join(homeDir, "fe", "dist")
+	if _, err := os.Stat(feRoot); os.IsNotExist(err) {
+		feRoot = filepath.Join(homeDir, "dist")
+		if _, errPublic := os.Stat(filepath.Join(homeDir, "public")); errPublic == nil {
+			feRoot = filepath.Join(homeDir, "public")
+		}
+	}
+
+	mimeTypes := g.findMimeTypesPath()
+
+	content := fmt.Sprintf(`worker_processes 1;
+pid %s/tmp/nginx.pid;
+error_log %s/tmp/error.log;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include %s;
+    default_type application/octet-stream;
+    access_log %s/tmp/access.log;
+
+    client_body_temp_path %s/tmp/client_body;
+    proxy_temp_path %s/tmp/proxy;
+    fastcgi_temp_path %s/tmp/fastcgi;
+    uwsgi_temp_path %s/tmp/uwsgi;
+    scgi_temp_path %s/tmp/scgi;
+
+    server {
+        listen %s;
+        server_name _;
+
+        location /api {
+            proxy_pass http://127.0.0.1:%s;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_cache_bypass $http_upgrade;
+        }
+
+        location / {
+            root %s;
+            index index.html;
+            try_files $uri $uri/ /index.html;
+        }
+    }
+}
+`, homeDir, homeDir, mimeTypes, homeDir, homeDir, homeDir, homeDir, homeDir, homeDir, portFE, portBE, feRoot)
+
+	return os.WriteFile(filepath.Join(homeDir, "nginx.conf"), []byte(content), 0644)
+}
+
 func (g *ConfigGenerator) GenerateNginxSystemdService(systemdDir, appName string) error {
 	if err := os.MkdirAll(systemdDir, 0755); err != nil {
 		return err
@@ -435,6 +525,120 @@ WantedBy=default.target
 	return os.WriteFile(unitPath, []byte(content), 0644)
 }
 
+func (g *ConfigGenerator) GeneratePythonDirectRunScript(homeDir, portSingle string) error {
+	content := fmt.Sprintf(`#!/bin/bash
+set -e
+
+# 1. Fallback Server jika belum ada kode aplikasi Python
+if [ ! -f "main.py" ] && [ ! -f "app.py" ] && [ ! -f "requirements.txt" ] && [ ! -f "pyproject.toml" ] && \
+   [ ! -f "backend/main.py" ] && [ ! -f "backend/app.py" ] && [ ! -f "api/main.py" ] && [ ! -f "api/app.py" ]; then
+    echo "[INFO] Python project files not found. Starting placeholder HTTP server on port ${PORT:-%s}..."
+    exec python3 -c "
+import http.server, socketserver, os
+port = int(os.environ.get('PORT', '%s'))
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.end_headers()
+        self.wfile.write(b'<h1>Python Application Ready</h1><p>Awaiting deployment in user home directory.</p>')
+    def log_message(self, format, *args):
+        pass
+with socketserver.TCPServer(('0.0.0.0', port), Handler) as httpd:
+    httpd.serve_forever()
+"
+fi
+
+# 2. Deteksi lokasi working directory
+if [ -d "backend" ] && ([ -f "backend/main.py" ] || [ -f "backend/app.py" ] || [ -f "backend/requirements.txt" ]); then
+    cd backend
+elif [ -d "api" ] && ([ -f "api/main.py" ] || [ -f "api/app.py" ] || [ -f "api/requirements.txt" ]); then
+    cd api
+fi
+
+# 3. Otomatis aktifkan virtual environment jika tersedia
+if [ -f ".venv/bin/activate" ]; then
+    source .venv/bin/activate
+elif [ -f "venv/bin/activate" ]; then
+    source venv/bin/activate
+elif [ -f "../.venv/bin/activate" ]; then
+    source ../.venv/bin/activate
+elif [ -f "../venv/bin/activate" ]; then
+    source ../venv/bin/activate
+fi
+
+# 4. Deteksi runner dan jalankan aplikasi
+APP_PORT="${PORT:-%s}"
+
+if command -v uvicorn >/dev/null 2>&1; then
+    if [ -f "main.py" ]; then
+        exec uvicorn main:app --host 0.0.0.0 --port "$APP_PORT"
+    elif [ -f "app.py" ]; then
+        exec uvicorn app:app --host 0.0.0.0 --port "$APP_PORT"
+    elif [ -f "app/main.py" ]; then
+        exec uvicorn app.main:app --host 0.0.0.0 --port "$APP_PORT"
+    fi
+fi
+
+if command -v gunicorn >/dev/null 2>&1; then
+    if [ -f "wsgi.py" ]; then
+        exec gunicorn wsgi:application --bind "0.0.0.0:$APP_PORT"
+    elif [ -f "app.py" ]; then
+        exec gunicorn app:app --bind "0.0.0.0:$APP_PORT"
+    elif [ -f "main.py" ]; then
+        exec gunicorn main:app --bind "0.0.0.0:$APP_PORT"
+    fi
+fi
+
+if [ -f "main.py" ]; then
+    exec python3 main.py
+elif [ -f "app.py" ]; then
+    exec python3 app.py
+else
+    echo "[ERROR] No valid Python entry point found (main.py, app.py, uvicorn, or gunicorn)."
+    exit 1
+fi
+`, portSingle, portSingle, portSingle)
+
+	runScriptPath := filepath.Join(homeDir, "run.sh")
+	if err := os.WriteFile(runScriptPath, []byte(content), 0755); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (g *ConfigGenerator) GeneratePythonDirectSystemdService(systemdDir, appName, portSingle string) error {
+	if err := os.MkdirAll(systemdDir, 0755); err != nil {
+		return err
+	}
+
+	content := fmt.Sprintf(`[Unit]
+Description=Python App (Direct Runtime) - %%u
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%%h
+ExecStart=%%h/run.sh
+Restart=always
+RestartSec=5s
+
+# Alokasi environment
+Environment=PORT=%s
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=%%h/.venv/bin:%%h/venv/bin:/usr/local/bin:/usr/bin:/bin
+
+# Membaca .env milik user jika tersedia
+EnvironmentFile=-%%h/.env
+
+[Install]
+WantedBy=default.target
+`, portSingle)
+
+	unitPath := filepath.Join(systemdDir, fmt.Sprintf("%s.service", appName))
+	return os.WriteFile(unitPath, []byte(content), 0644)
+}
+
 func (g *ConfigGenerator) CreatePlaceholders(homeDir string, stack domain.StackType, appName string, portBE string) error {
 	switch stack {
 	case domain.StackLaravel:
@@ -486,6 +690,29 @@ func (g *ConfigGenerator) CreatePlaceholders(homeDir string, stack domain.StackT
 			content := fmt.Sprintf("<?php\necho \"<h1>Laravel BE (%s) Siap</h1><p>Menunggu deployment di direktori be/.</p>\";\n", appName)
 			_ = os.WriteFile(beIndexPath, []byte(content), 0644)
 		}
+	case domain.StackPythonAPI:
+		_ = g.GeneratePythonDirectRunScript(homeDir, portBE)
+	case domain.StackNodePython:
+		// FE placeholder: fe/dist/index.html
+		feDistDir := filepath.Join(homeDir, "fe", "dist")
+		_ = os.MkdirAll(feDistDir, 0755)
+		feIndexPath := filepath.Join(feDistDir, "index.html")
+		if _, err := os.Stat(feIndexPath); os.IsNotExist(err) {
+			content := fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head><title>%s</title></head>
+<body>
+<h1>Aplikasi Node.js FE (%s) Siap</h1>
+<p>Frontend Static. API Python tersedia di <code>/api/*</code> pada port %s.</p>
+</body>
+</html>
+`, appName, appName, portBE)
+			_ = os.WriteFile(feIndexPath, []byte(content), 0644)
+		}
+		// BE placeholder: be/run.sh
+		beDir := filepath.Join(homeDir, "be")
+		_ = os.MkdirAll(beDir, 0755)
+		_ = g.GeneratePythonDirectRunScript(beDir, portBE)
 	}
 	return nil
 }

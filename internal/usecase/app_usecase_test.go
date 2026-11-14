@@ -161,6 +161,18 @@ func (m *mockWebGen) GenerateNodeDirectRunScript(homeDir, portSingle string) err
 func (m *mockWebGen) GenerateNodeDirectSystemdService(systemdDir, appName, portSingle string) error {
 	return nil
 }
+func (m *mockWebGen) GeneratePythonDirectRunScript(homeDir, portSingle string) error {
+	return nil
+}
+func (m *mockWebGen) GeneratePythonDirectSystemdService(systemdDir, appName, portSingle string) error {
+	return nil
+}
+func (m *mockWebGen) GenerateNodePythonCaddyfile(homeDir, portFE, portBE string) error {
+	return nil
+}
+func (m *mockWebGen) GenerateNodePythonNginxConfig(homeDir, portFE, portBE string) error {
+	return nil
+}
 func (m *mockWebGen) CreatePlaceholders(homeDir string, stack domain.StackType, appName string, portBE string) error {
 	return nil
 }
@@ -237,4 +249,46 @@ func TestAppUsecase(t *testing.T) {
 	if len(listAfter) != 0 {
 		t.Errorf("expected 0 apps after delete, got %d", len(listAfter))
 	}
+
+	// 4. Create Python API App
+	pyDto := &domain.CreateAppDTO{
+		Name:         "pyapp",
+		UserPassword: "password123",
+		Stack:        domain.StackPythonAPI,
+		PortSingle:   "8001",
+		DBName:       "pyapp_db",
+		DBUser:       "pyapp_u",
+		DBPassword:   "dbpass123",
+	}
+	pyApp, err := uc.Create(pyDto)
+	if err != nil {
+		t.Fatalf("Create Python API failed: %v", err)
+	}
+	if pyApp.Stack != domain.StackPythonAPI || pyApp.Port != "8001" {
+		t.Errorf("unexpected python app metadata: %+v", pyApp)
+	}
+
+	// 5. Create Node Python Fullstack App
+	nodePyDto := &domain.CreateAppDTO{
+		Name:         "nodepyapp",
+		UserPassword: "password123",
+		Stack:        domain.StackNodePython,
+		PortFE:       "8080",
+		PortBE:       "8001",
+		WebServer:    domain.WebServerCaddy,
+		DBName:       "nodepy_db",
+		DBUser:       "nodepy_u",
+		DBPassword:   "dbpass123",
+	}
+	nodePyApp, err := uc.Create(nodePyDto)
+	if err != nil {
+		t.Fatalf("Create Node-Python failed: %v", err)
+	}
+	if nodePyApp.Stack != domain.StackNodePython || nodePyApp.PortFE != "8080" || nodePyApp.PortBE != "8001" {
+		t.Errorf("unexpected node-python app metadata: %+v", nodePyApp)
+	}
+
+	// Clean up
+	_ = uc.Delete(&domain.DeleteAppDTO{Name: "pyapp"})
+	_ = uc.Delete(&domain.DeleteAppDTO{Name: "nodepyapp"})
 }
