@@ -106,6 +106,35 @@ func (i *PackageInstaller) InstallNodeAndNPM(osDistro string) error {
 	return nil
 }
 
+func (i *PackageInstaller) InstallPythonAndPip(osDistro string) error {
+	logger.Info("Menginstal Python 3, Pip, dan Virtualenv untuk OS: %s...", osDistro)
+
+	switch osDistro {
+	case "arch":
+		if err := i.runCommand("pacman", "-Sy", "--noconfirm", "--needed", "python", "python-pip", "python-virtualenv"); err != nil {
+			return err
+		}
+	case "debian":
+		_ = i.runCommand("apt-get", "update")
+		cmd := exec.Command("apt-get", "install", "-y", "python3", "python3-pip", "python3-venv", "python3-dev", "build-essential")
+		cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+	case "fedora":
+		if err := i.runCommand("dnf", "install", "-y", "python3", "python3-pip", "python3-virtualenv", "python3-devel", "gcc"); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("%w: %s", domain.ErrUnknownOS, osDistro)
+	}
+
+	logger.Success("Python 3, Pip, dan Virtualenv berhasil diinstal!")
+	return nil
+}
+
 func (i *PackageInstaller) InstallWebServers(osDistro string) error {
 	logger.Info("Menginstal Web Server (Caddy & Nginx) untuk OS: %s...", osDistro)
 

@@ -90,16 +90,18 @@ func (u *SetupUsecase) Execute(opts *domain.SetupOptions) error {
 	runCompletion := opts.Completion
 	runPHP := opts.PHP
 	runNode := opts.Node
+	runPython := opts.Python
 	runWeb := opts.Web
 	runDB := opts.DB
 	runFastCGI := opts.FastCGI
 
 	// If no specific flag set or All is true, enable all stages
-	if opts.All || (!runSymlink && !runCompletion && !runPHP && !runNode && !runWeb && !runDB && !runFastCGI) {
+	if opts.All || (!runSymlink && !runCompletion && !runPHP && !runNode && !runPython && !runWeb && !runDB && !runFastCGI) {
 		runSymlink = true
 		runCompletion = true
 		runPHP = true
 		runNode = true
+		runPython = true
 		runWeb = true
 		runDB = true
 		runFastCGI = true
@@ -113,6 +115,8 @@ func (u *SetupUsecase) Execute(opts *domain.SetupOptions) error {
 			runPHP = false
 		case "node", "nodejs", "npm":
 			runNode = false
+		case "python", "pip", "py", "venv":
+			runPython = false
 		case "web", "webserver", "webservers", "caddy", "nginx":
 			runWeb = false
 		case "db", "shell", "shell-db", "fish", "mariadb", "mysql":
@@ -130,7 +134,7 @@ func (u *SetupUsecase) Execute(opts *domain.SetupOptions) error {
 		}
 	}
 
-	if !runSymlink && !runCompletion && !runPHP && !runNode && !runWeb && !runDB && !runFastCGI {
+	if !runSymlink && !runCompletion && !runPHP && !runNode && !runPython && !runWeb && !runDB && !runFastCGI {
 		logger.Warn("Tidak ada tahap setup yang dijalankan karena semua tahap dikecualikan.")
 		return nil
 	}
@@ -157,6 +161,12 @@ func (u *SetupUsecase) Execute(opts *domain.SetupOptions) error {
 	if runNode {
 		if err := u.pkgInstaller.InstallNodeAndNPM(osDistro); err != nil {
 			logger.Error("Gagal menginstal Node.js & NPM: %v", err)
+		}
+	}
+
+	if runPython {
+		if err := u.pkgInstaller.InstallPythonAndPip(osDistro); err != nil {
+			logger.Error("Gagal menginstal Python & Pip: %v", err)
 		}
 	}
 

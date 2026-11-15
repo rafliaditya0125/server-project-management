@@ -219,6 +219,54 @@ func (u *AppUsecase) Create(dto *domain.CreateAppDTO) (*domain.App, error) {
 		portSingle = dto.PortSingle
 		dto.WebServer = domain.WebServerNone
 
+	case domain.StackPythonAPI:
+		stackName = "Python (Standalone API Only - Direct Python Runtime)"
+		if dto.PortSingle == "" {
+			dto.PortSingle = "8001"
+		}
+		if err := u.validatePort(dto.PortSingle); err != nil {
+			return nil, err
+		}
+		portSingle = dto.PortSingle
+		dto.WebServer = domain.WebServerNone
+
+	case domain.StackNodePython:
+		stackName = "Node.js FE + Python BE (Reverse Proxy)"
+		if dto.PortFE == "" {
+			dto.PortFE = "8080"
+		}
+		if dto.PortBE == "" {
+			dto.PortBE = "8001"
+		}
+		if err := u.validatePort(dto.PortFE); err != nil {
+			return nil, err
+		}
+		if err := u.validatePort(dto.PortBE); err != nil {
+			return nil, err
+		}
+		if dto.PortFE == dto.PortBE {
+			return nil, domain.ErrPortConflict
+		}
+		portFE = dto.PortFE
+		portBE = dto.PortBE
+		if dto.WebServer == "" {
+			dto.WebServer = domain.WebServerCaddy
+		}
+
+	case domain.StackNodeFrontend:
+		stackName = "Node.js (Frontend Static Only / SPA)"
+		if dto.PortFE == "" {
+			dto.PortFE = "8080"
+		}
+		if err := u.validatePort(dto.PortFE); err != nil {
+			return nil, err
+		}
+		portFE = dto.PortFE
+		portSingle = dto.PortFE
+		if dto.WebServer == "" {
+			dto.WebServer = domain.WebServerCaddy
+		}
+
 	default:
 		return nil, domain.ErrInvalidStack
 	}
@@ -318,6 +366,33 @@ func (u *AppUsecase) Create(dto *domain.CreateAppDTO) (*domain.App, error) {
 		logger.Info("Membuat service direct Node.js runtime dan run.sh...")
 		_ = u.webGen.GenerateNodeDirectRunScript(homeDir, portSingle)
 		_ = u.webGen.GenerateNodeDirectSystemdService(systemdUserDir, dto.Name, portSingle)
+	} else if dto.Stack == domain.StackPythonAPI {
+		logger.Info("Membuat service direct Python runtime dan run.sh...")
+		_ = u.webGen.GeneratePythonDirectRunScript(homeDir, portSingle)
+		_ = u.webGen.GeneratePythonDirectSystemdService(systemdUserDir, dto.Name, portSingle)
+	} else if dto.Stack == domain.StackNodePython {
+		if dto.WebServer == domain.WebServerCaddy {
+			logger.Info("Membuat konfigurasi Caddyfile (Node.js FE + Python BE)...")
+			_ = u.webGen.GenerateNodePythonCaddyfile(homeDir, portFE, portBE)
+			_ = u.webGen.GenerateCaddySystemdService(systemdUserDir, dto.Name)
+		} else if dto.WebServer == domain.WebServerNginx {
+			logger.Info("Membuat direktori temporary Nginx dan file nginx.conf (Node.js FE + Python BE)...")
+			_ = u.webGen.GenerateNodePythonNginxConfig(homeDir, portFE, portBE)
+			_ = u.webGen.GenerateNginxSystemdService(systemdUserDir, dto.Name)
+		}
+		beDir := filepath.Join(homeDir, "be")
+		_ = os.MkdirAll(beDir, 0755)
+		_ = u.webGen.GeneratePythonDirectRunScript(beDir, portBE)
+	} else if dto.Stack == domain.StackNodeFrontend {
+		if dto.WebServer == domain.WebServerCaddy {
+			logger.Info("Membuat konfigurasi Caddyfile (Node.js Frontend Static)...")
+			_ = u.webGen.GenerateNodeFrontendCaddyfile(homeDir, portFE)
+			_ = u.webGen.GenerateCaddySystemdService(systemdUserDir, dto.Name)
+		} else if dto.WebServer == domain.WebServerNginx {
+			logger.Info("Membuat direktori temporary Nginx dan file nginx.conf (Node.js Frontend Static)...")
+			_ = u.webGen.GenerateNodeFrontendNginxConfig(homeDir, portFE)
+			_ = u.webGen.GenerateNginxSystemdService(systemdUserDir, dto.Name)
+		}
 	}
 
 	// 8. Perbaiki Kepemilikan & Izin File
@@ -449,6 +524,24 @@ func (u *AppUsecase) List() ([]domain.AppStatusInfo, error) {
 				displayPort = a.Port
 			} else {
 				displayPort = "-"
+			}
+		} else if a.Stack == domain.StackPythonAPI {
+			if a.Port != "N/A" && a.Port != "" {
+				displayPort = a.Port
+			} else {
+				displayPort = "-"
+			}
+		} else if a.Stack == domain.StackNodePython {
+			if a.PortFE != "N/A" && a.PortFE != "" {
+				displayPort = fmt.Sprintf("%s (FE) | %s (BE)", a.PortFE, a.PortBE)
+			} else {
+				displayPort = "-"
+			}
+		} else if a.Stack == domain.StackNodeFrontend {
+			if a.PortFE != "N/A" && a.PortFE != "" {
+				displayPort = a.PortFE
+			} else {
+				displayPort = valueOrDefault(a.Port, "-")
 			}
 		} else {
 			if a.Port != "N/A" && a.Port != "" {

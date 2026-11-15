@@ -10,6 +10,9 @@ const (
 	StackNodeFullstack StackType = "node-fullstack"
 	StackNodeAPI       StackType = "node-api"
 	StackNodeLaravel   StackType = "node-laravel"
+	StackPythonAPI     StackType = "python-api"
+	StackNodePython    StackType = "node-python"
+	StackNodeFrontend  StackType = "node-frontend"
 )
 
 // WebServerType represents the web server chosen for an application.
@@ -98,6 +101,7 @@ type SetupOptions struct {
 	All         bool     `json:"all"`
 	PHP         bool     `json:"php"`
 	Node        bool     `json:"node"`
+	Python      bool     `json:"python"`
 	Web         bool     `json:"web"`
 	DB          bool     `json:"db"`
 	FastCGI     bool     `json:"fastcgi"`

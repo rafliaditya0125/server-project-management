@@ -44,6 +44,13 @@ type WebServerConfigGenerator interface {
 	GenerateNodeDirectRunScript(homeDir, portSingle string) error
 	GenerateNodeDirectSystemdService(systemdDir, appName, portSingle string) error
 
+	GeneratePythonDirectRunScript(homeDir, portSingle string) error
+	GeneratePythonDirectSystemdService(systemdDir, appName, portSingle string) error
+	GenerateNodePythonCaddyfile(homeDir, portFE, portBE string) error
+	GenerateNodePythonNginxConfig(homeDir, portFE, portBE string) error
+	GenerateNodeFrontendCaddyfile(homeDir, portFE string) error
+	GenerateNodeFrontendNginxConfig(homeDir, portFE string) error
+
 	CreatePlaceholders(homeDir string, stack StackType, appName string, portBE string) error
 	GetCaddyPath() string
 	GetNginxPath() string
@@ -53,6 +60,7 @@ type WebServerConfigGenerator interface {
 type PackageManager interface {
 	InstallPHPAndComposer(osDistro string) error
 	InstallNodeAndNPM(osDistro string) error
+	InstallPythonAndPip(osDistro string) error
 	InstallWebServers(osDistro string) error
 	InstallShellAndDBClient(osDistro string) error
 	DetectPhpFpmSocket() string

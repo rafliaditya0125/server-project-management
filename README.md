@@ -41,10 +41,10 @@ Untuk panduan operasional langkah-demi-langkah yang mendalam, silakan baca dokum
 ## 📌 Daftar Perintah CLI
 
 - **`help`** : Menampilkan panduan dan daftar opsi command.
-- **`setup [flags]`** : Setup dependensi server (PHP, Composer, Node.js, NPM, Caddy, Nginx, MariaDB Client, Fish Shell, Symlink global `/usr/local/bin/project`, Shell Autocompletion) serta konfigurasi mode FastCGI PHP-FPM (Unix Socket / TCP Port).
+- **`setup [flags]`** : Setup dependensi server (PHP, Composer, Node.js, NPM, Python 3, Pip, Virtualenv, Caddy, Nginx, MariaDB Client, Fish Shell, Symlink global `/usr/local/bin/project`, Shell Autocompletion) serta konfigurasi mode FastCGI PHP-FPM (Unix Socket / TCP Port).
   - Tanpa opsi: Menjalankan semua tahap secara otomatis.
-  - Flag tahap: `--php`, `--node`, `--web`, `--db`, `--fastcgi`, `--symlink`, `--completion`, `--all`.
-  - Pengecualian: `-e` atau `--except=<tahap1,tahap2>` (contoh: `--except=db` atau `-e php,fastcgi`).
+  - Flag tahap: `--php`, `--node`, `--python`, `--web`, `--db`, `--fastcgi`, `--symlink`, `--completion`, `--all`.
+  - Pengecualian: `-e` atau `--except=<tahap1,tahap2>` (contoh: `--except=db` atau `-e php,fastcgi,python`).
   - Interaktif: `--interactive` atau `-i`.
 - **`create`** : Membuat user sistem terisolasi, home folder `/home/apps/<nama-aplikasi>`, database & user MySQL, serta service systemd user sesuai stack dan pilihan web server (Caddy / Nginx).
 - **`delete <nama>`** : Menghapus user sistem, direktori home aplikasi, database & user MySQL, dan service systemd user.
@@ -58,7 +58,11 @@ Untuk panduan operasional langkah-demi-langkah yang mendalam, silakan baca dokum
 
 ## 🏗️ Stack Aplikasi yang Didukung
 
-Saat membuat aplikasi baru (`project create`), tersedia 4 pilihan stack:
+Saat membuat aplikasi baru (`project create`), wizard membagi pemilihan stack menjadi:
+1. **Pilihan Frontend**: Node.js (React/Vue/Vite/SPA) atau lewati (skip jika diserve oleh backend/monolitik).
+2. **Pilihan Backend**: Laravel, Node.js, atau Python. *(Catatan: jika frontend dilewati, backend **wajib diisi**; jika frontend dipilih, backend bisa dipilih atau dilewati).*
+
+Kombinasi tersebut menghasilkan 7 opsi stack:
 
 ### 1. `laravel` — Laravel (PHP-FPM)
 Laravel monolitik yang dilayani via **FastCGI** (PHP-FPM) menggunakan Caddy atau Nginx.
@@ -183,6 +187,102 @@ server {
 
 ---
 
+### 5. `python-api` — Python Standalone API
+Aplikasi Python berjalan langsung sebagai user service systemd melalui script runner `run.sh`. Mendukung otomatisasi aktivasi virtual environment (`.venv`/`venv`), fallback HTTP placeholder server sebelum deployment, serta deteksi runner FastAPI/Uvicorn, Gunicorn, `main.py`, atau `app.py`.
+
+```
+[portSingle: Python API langsung via run.sh (Default port: 8001)]
+```
+
+**Direktori aplikasi:**
+```
+/home/apps/<nama>/
+├── run.sh           ← Script entrypoint & auto-detect (auto-generated)
+├── requirements.txt ← Dependensi Python
+└── main.py / app.py ← Atau di subfolder backend/ / api/
+```
+
+---
+
+### 6. `node-python` — Node.js FE + Python BE (Reverse Proxy)
+Frontend Node.js (React/Vue/SPA) + Backend Python API dilayani oleh satu web server (Caddy / Nginx). Rute statis `/*` diarahkan ke build output frontend (`fe/dist/`), sedangkan rute `/api/*` diteruskan (*reverse proxied*) ke backend Python di `127.0.0.1:portBE`.
+
+```
+[portFE: Caddy/Nginx]
+    ├── /*      ──► Static files (fe/dist/)
+    └── /api/*  ──► reverse_proxy 127.0.0.1:portBE (Python API via be/run.sh)
+```
+
+**Konfigurasi Caddy (`Caddyfile`):**
+```caddyfile
+{
+    admin off
+}
+
+:8080 {
+    root * /home/apps/<nama>/fe/dist
+    file_server
+
+    handle /api/* {
+        reverse_proxy 127.0.0.1:8001
+    }
+
+    try_files {path} /index.html
+}
+```
+
+**Konfigurasi Nginx (`nginx.conf`):**
+```nginx
+server {
+    listen 8080;
+
+    location /api {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    location / {
+        root /home/apps/<nama>/fe/dist;
+        index index.html;
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+**Direktori aplikasi:**
+```
+/home/apps/<nama>/
+├── fe/              ← Repo / hasil build frontend (Node.js)
+│   └── dist/
+│       └── index.html
+└── be/              ← Kode sumber Python API
+    ├── run.sh       ← Runner script backend (auto-generated)
+    └── main.py      ← Entry point API
+```
+
+---
+
+### 7. `node-frontend` — Node.js Frontend Static Only (SPA)
+Frontend statis Node.js (React/Vue/Vite/Svelte/SPA) murni tanpa backend di server internal, diserve langsung dengan Caddy atau Nginx (dengan SPA routing fallback).
+
+```
+[portFE: Caddy/Nginx]
+    └── /*  ──► Static files (dist/index.html)
+```
+
+**Direktori aplikasi:**
+```
+/home/apps/<nama>/
+└── dist/
+    └── index.html   ← File build frontend
+```
+
+---
+
 ## ⚡ Autocompletion Pintar (Cobra Dynamic Completion)
 
 Auto-completion didukung penuh untuk **Bash, Zsh, dan Fish**:
@@ -244,7 +344,7 @@ Ketika dijalankan via `sudo project serve` atau `bin/project-api`:
 │   ├── config/
 │   │   └── config.go               # Registry paths & environment variables
 │   ├── domain/                     # Core Business Entities & Interfaces
-│   │   ├── app.go                  # StackType: laravel, node-fullstack, node-api, node-laravel
+│   │   ├── app.go                  # StackType: laravel, node-fullstack, node-api, node-laravel, python-api, node-python, node-frontend
 │   │   ├── config.go
 │   │   ├── errors.go
 │   │   ├── platform.go

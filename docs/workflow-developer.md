@@ -12,6 +12,8 @@ Panduan lengkap bagi Developer setelah menerima kredensial dari Administrator Se
    - [Stack 2: Node.js Fullstack (Static FE + API BE)](#stack-2-nodejs-fullstack-static-fe--api-be)
    - [Stack 3: Node.js Standalone API](#stack-3-nodejs-standalone-api)
    - [Stack 4: Node.js FE + Laravel BE (FastCGI Reverse Proxy)](#stack-4-nodejs-fe--laravel-be-fastcgi-reverse-proxy)
+   - [Stack 5: Python Standalone API](#stack-5-python-standalone-api)
+   - [Stack 6: Node.js FE + Python BE (Reverse Proxy)](#stack-6-nodejs-fe--python-be-reverse-proxy)
 4. [Kustomisasi Caddyfile & nginx.conf (Fleksibilitas Struktur Folder)](#4-kustomisasi-caddyfile--nginxconf-fleksibilitas-struktur-folder)
 5. [Manajemen Service Systemd (User-Level)](#5-manajemen-service-systemd-user-level)
 6. [Monitoring & Membaca Log Aplikasi](#6-monitoring--membaca-log-aplikasi)
@@ -292,6 +294,106 @@ systemctl --user restart myapp
 > 🎯 **Cara Kerja Rute:**
 > - Buka `http://103.xx.xx.xx:8080/` -> Menampilkan UI frontend SPA Anda.
 > - Request ke `http://103.xx.xx.xx:8080/api/users` -> Otomatis diproses oleh `routes/api.php` di Laravel.
+
+---
+
+### Stack 5: Python Standalone API
+
+Pada stack ini, aplikasi Python berjalan mandiri di bawah user service systemd yang mengeksekusi script `run.sh` secara langsung tanpa reverse proxy web server wrapper.
+
+#### 📁 Struktur Direktori yang Diharapkan:
+```text
+/home/apps/myapp/
+├── run.sh              <-- Script runner (dihasilkan otomatis)
+├── requirements.txt    <-- Dependensi Python
+├── .venv/ (atau venv/) <-- Virtual environment Python
+├── main.py (atau app.py, wsgi.py)
+└── .env                <-- Environment variables (PORT, DB_*, dsb)
+```
+
+#### 🚀 Langkah-langkah Deployment:
+1. **Siapkan Virtual Environment & Dependensi**:
+   ```bash
+   cd /home/apps/myapp
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install --upgrade pip
+   pip install -r requirements.txt
+   ```
+
+2. **Sesuaikan Variabel Lingkungan (`.env`)**:
+   ```env
+   PORT=8001
+   DB_HOST=127.0.0.1
+   DB_PORT=3306
+   DB_NAME=myapp
+   DB_USER=myapp
+   DB_PASSWORD=password_db_kamu
+   ```
+
+3. **Entry Point & Runner**:
+   Script `run.sh` otomatis mendeteksi:
+   - Jika tersedia `uvicorn` dan `main.py` -> Menjalankan `uvicorn main:app --host 0.0.0.0 --port $PORT`
+   - Jika tersedia `gunicorn` -> Menjalankan `gunicorn wsgi:application --bind 0.0.0.0:$PORT`
+   - Jika `main.py` atau `app.py` -> Menjalankan `python3 main.py` / `python3 app.py`
+
+4. **Restart User Service**:
+   ```bash
+   systemctl --user restart myapp
+   ```
+
+---
+
+### Stack 6: Node.js FE + Python BE (Reverse Proxy)
+
+Stack ini menggabungkan frontend modern berbasis Node.js (Vite, React, Vue, Svelte) dan backend **Python API** (FastAPI, Flask, Django) dalam satu kesatuan web server yang efisien.
+
+#### 📁 Struktur Direktori yang Diharapkan:
+```text
+/home/apps/myapp/
+├── fe/                 <-- Repositori / sumber frontend Node.js
+│   └── dist/           <-- Hasil build statis (index.html, assets/)
+├── be/                 <-- Repositori / sumber Python backend
+│   ├── run.sh          <-- Runner backend Python
+│   ├── .venv/          <-- Virtual environment
+│   ├── requirements.txt
+│   └── main.py (atau app.py)
+└── Caddyfile (atau nginx.conf)
+```
+
+#### 🚀 Langkah-langkah Deployment:
+1. **Build Frontend**:
+   ```bash
+   cd /home/apps/myapp/fe
+   npm install
+   npm run build
+   # Pastikan output hasil build berada di /home/apps/myapp/fe/dist/
+   ```
+
+2. **Setup Backend Python**:
+   ```bash
+   cd /home/apps/myapp/be
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+3. **Jalankan Backend Python**:
+   Pastikan backend mendengarkan pada port internal (`portBE`, misal `8001`):
+   ```bash
+   cd /home/apps/myapp/be
+   ./run.sh
+   # Atau jalankan via user process manager / systemd service
+   ```
+
+4. **Restart Web Server**:
+   ```bash
+   systemctl --user restart myapp
+   ```
+
+> 🎯 **Cara Kerja Rute:**
+> - Buka `http://103.xx.xx.xx:8080/` -> Menampilkan UI frontend SPA Anda.
+> - Request ke `http://103.xx.xx.xx:8080/api/items` -> Diteruskan apa adanya ke backend Python pada `http://127.0.0.1:8001/api/items`.
 
 ---
 

@@ -15,6 +15,7 @@ func (c *CLI) newSetupCmd() *cobra.Command {
 		flagAll         bool
 		flagPHP         bool
 		flagNode        bool
+		flagPython      bool
 		flagWeb         bool
 		flagDB          bool
 		flagFastCGI     bool
@@ -36,6 +37,7 @@ DAFTAR OPSI TAHAP SETUP:
   --all, all               : Jalankan semua tahap setup (default)
   --php, php               : Install PHP, ekstensi umum, dan Composer
   --node, node             : Install Node.js dan NPM
+  --python, python         : Install Python 3, Pip, dan Virtualenv
   --web, web               : Install Web Server (Caddy & Nginx)
   --db, db                 : Install Fish Shell dan MariaDB/MySQL Client
   --fastcgi, fastcgi       : Konfigurasi koneksi PHP-FPM FastCGI (Socket / TCP)
@@ -43,7 +45,7 @@ DAFTAR OPSI TAHAP SETUP:
   --completion, completion : Pasang shell autocompletion (Bash, Zsh, Fish)
   -e=<list>, --except=<list>: Kecualikan tahap tertentu (pisahkan koma jika jamak)
   --interactive, -i        : Jalankan setup melalui menu interaktif`,
-		ValidArgs: []string{"all", "php", "composer", "node", "npm", "web", "caddy", "nginx", "db", "shell", "fastcgi", "symlink", "completion"},
+		ValidArgs: []string{"all", "php", "composer", "node", "npm", "python", "pip", "venv", "web", "caddy", "nginx", "db", "shell", "fastcgi", "symlink", "completion"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := checkRoot(); err != nil {
 				return err
@@ -53,6 +55,7 @@ DAFTAR OPSI TAHAP SETUP:
 				All:         flagAll,
 				PHP:         flagPHP,
 				Node:        flagNode,
+				Python:      flagPython,
 				Web:         flagWeb,
 				DB:          flagDB,
 				FastCGI:     flagFastCGI,
@@ -70,6 +73,8 @@ DAFTAR OPSI TAHAP SETUP:
 					opts.PHP = true
 				case "node", "nodejs", "npm":
 					opts.Node = true
+				case "python", "pip", "py", "venv", "virtualenv":
+					opts.Python = true
 				case "web", "caddy", "nginx":
 					opts.Web = true
 				case "db", "shell", "mariadb", "mysql":
@@ -101,6 +106,7 @@ DAFTAR OPSI TAHAP SETUP:
 	setupCmd.Flags().BoolVar(&flagAll, "all", false, "Jalankan semua tahap setup")
 	setupCmd.Flags().BoolVar(&flagPHP, "php", false, "Install PHP, ekstensi umum, dan Composer")
 	setupCmd.Flags().BoolVar(&flagNode, "node", false, "Install Node.js dan NPM")
+	setupCmd.Flags().BoolVar(&flagPython, "python", false, "Install Python 3, Pip, dan Virtualenv")
 	setupCmd.Flags().BoolVar(&flagWeb, "web", false, "Install Web Server (Caddy & Nginx)")
 	setupCmd.Flags().BoolVar(&flagDB, "db", false, "Install Fish Shell dan MariaDB/MySQL Client")
 	setupCmd.Flags().BoolVar(&flagFastCGI, "fastcgi", false, "Konfigurasi koneksi PHP-FPM FastCGI (Socket / TCP)")
@@ -110,7 +116,7 @@ DAFTAR OPSI TAHAP SETUP:
 	setupCmd.Flags().StringVarP(&flagExcept, "except", "e", "", "Kecualikan tahap tertentu (pisahkan koma jika jamak)")
 
 	_ = setupCmd.RegisterFlagCompletionFunc("except", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		stages := []string{"php", "composer", "node", "npm", "web", "caddy", "nginx", "db", "shell", "fastcgi", "symlink", "completion"}
+		stages := []string{"php", "composer", "node", "npm", "python", "pip", "venv", "web", "caddy", "nginx", "db", "shell", "fastcgi", "symlink", "completion"}
 		return stages, cobra.ShellCompDirectiveNoFileComp
 	})
 
@@ -127,18 +133,19 @@ func (c *CLI) runInteractiveSetup() error {
 
 	fmt.Println("Pilih menu setup yang ingin dijalankan:")
 	fmt.Printf("  1. %sSetup Lengkap (Semua Tahap)%s\n", logger.ColorGreen, logger.ColorReset)
-	fmt.Println("     (Symlink CLI + Autocompletion + PHP + Node.js + Web Server + Fish/DB + FastCGI)")
+	fmt.Println("     (Symlink CLI + Autocompletion + PHP + Node.js + Python + Web Server + Fish/DB + FastCGI)")
 	fmt.Println("  2. Install PHP, Ekstensi & Composer")
 	fmt.Println("  3. Install Node.js & NPM")
-	fmt.Println("  4. Install Web Server (Caddy & Nginx)")
-	fmt.Println("  5. Install Fish Shell & Database Client")
-	fmt.Println("  6. Konfigurasi PHP-FPM FastCGI (Unix Socket vs TCP Port)")
-	fmt.Println("  7. Buat Symlink Global (/usr/local/bin/project)")
-	fmt.Println("  8. Pasang Shell Autocompletion (Bash, Zsh, Fish)")
-	fmt.Println("  9. Keluar")
+	fmt.Println("  4. Install Python 3, Pip & Virtualenv")
+	fmt.Println("  5. Install Web Server (Caddy & Nginx)")
+	fmt.Println("  6. Install Fish Shell & Database Client")
+	fmt.Println("  7. Konfigurasi PHP-FPM FastCGI (Unix Socket vs TCP Port)")
+	fmt.Println("  8. Buat Symlink Global (/usr/local/bin/project)")
+	fmt.Println("  9. Pasang Shell Autocompletion (Bash, Zsh, Fish)")
+	fmt.Println("  10. Keluar")
 	fmt.Println()
 
-	choice := terminal.ReadPrompt("Pilihan menu (1-9)", "1")
+	choice := terminal.ReadPrompt("Pilihan menu (1-10)", "1")
 	switch choice {
 	case "1":
 		return c.setupUsecase.Execute(&domain.SetupOptions{All: true})
@@ -147,10 +154,12 @@ func (c *CLI) runInteractiveSetup() error {
 	case "3":
 		return c.setupUsecase.Execute(&domain.SetupOptions{Node: true})
 	case "4":
-		return c.setupUsecase.Execute(&domain.SetupOptions{Web: true})
+		return c.setupUsecase.Execute(&domain.SetupOptions{Python: true})
 	case "5":
-		return c.setupUsecase.Execute(&domain.SetupOptions{DB: true})
+		return c.setupUsecase.Execute(&domain.SetupOptions{Web: true})
 	case "6":
+		return c.setupUsecase.Execute(&domain.SetupOptions{DB: true})
+	case "7":
 		currentSock := "/run/php/php8.3-fpm.sock"
 		currentPort := "9000"
 		if cfg != nil {
@@ -179,11 +188,11 @@ func (c *CLI) runInteractiveSetup() error {
 
 		_, err := c.setupUsecase.ConfigureFastCGI(osDistro, mode, sockPath, port)
 		return err
-	case "7":
-		return c.setupUsecase.Execute(&domain.SetupOptions{Symlink: true})
 	case "8":
-		return c.setupUsecase.Execute(&domain.SetupOptions{Completion: true})
+		return c.setupUsecase.Execute(&domain.SetupOptions{Symlink: true})
 	case "9":
+		return c.setupUsecase.Execute(&domain.SetupOptions{Completion: true})
+	case "10":
 		logger.Info("Keluar dari menu setup.")
 		return nil
 	default:

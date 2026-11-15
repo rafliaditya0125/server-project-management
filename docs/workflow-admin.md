@@ -8,7 +8,7 @@ Panduan komprehensif bagi Administrator Server / DevOps dalam menginisialisasi e
 1. [Prasyarat Server](#1-prasyarat-server)
 2. [Setup Awal Dependensi Server](#2-setup-awal-dependensi-server)
 3. [Alur Pembuatan Project (`project create`)](#3-alur-pembuatan-project-project-create)
-4. [Penjelasan 4 Pilihan Stack](#4-penjelasan-4-pilihan-stack)
+4. [Penjelasan 6 Pilihan Stack](#4-penjelasan-6-pilihan-stack)
 5. [Template Handoff Kredensial ke Developer](#5-template-handoff-kredensial-ke-developer)
 6. [Monitoring & Manajemen Aplikasi](#6-monitoring--manajemen-aplikasi)
 7. [Penghapusan Aplikasi (`project delete`)](#7-penghapusan-aplikasi-project-delete)
@@ -74,7 +74,9 @@ Admin akan dipandu melalui tahapan interaktif berikut:
 1. Masukkan nama aplikasi (username) : myapp
 2. Masukkan password user             : ********
    Konfirmasi password                : ********
-3. Pilih Stack Aplikasi               : (1/2/3/4)
+3. Pilihan Stack Frontend & Backend   :
+   - Pilih Frontend (Node.js atau lewati/diserve backend)
+   - Pilih Backend (Laravel, Node.js, Python, atau lewati jika FE dipilih)
 4. Link repositori git (Opsional)     : https://github.com/org/repo.git
 5. Konfigurasi Port & Web Server      : Port, FastCGI, Web Server pilihan
 6. Konfigurasi Database               : Nama DB, User DB, Password DB, Kredensial Root DB
@@ -99,16 +101,21 @@ Admin akan dipandu melalui tahapan interaktif berikut:
 
 ---
 
-## 4. Penjelasan 4 Pilihan Stack
+## 4. Penjelasan Pilihan Stack
 
-Saat memilih stack di menu opsi 3, berikut karakteristik dan parameter yang dibutuhkan:
+Pemilihan stack di menu opsi 3 dibagi menjadi dua tahap yang fleksibel: **Pilihan Stack Frontend** dan **Pilihan Stack Backend**:
+- **Frontend**: Bisa memilih Node.js (React/Vue/Vite/SPA) atau **dilewati (skip)** jika diserve oleh backend/monolitik.
+- **Backend**: Jika frontend dilewati, backend **wajib diisi**. Jika frontend dipilih, backend bisa dipilih atau dilewati (Frontend Statis murni).
 
 | No | Stack | Deskripsi | Parameter yang Diminta |
 |---|---|---|---|
-| **1** | **`laravel`** | Laravel monolitik via PHP-FPM FastCGI | Port Web (FE), Mode FastCGI (Socket/Port), Web Server (Caddy/Nginx) |
+| **1** | **`laravel`** | Laravel monolitik via PHP-FPM FastCGI (FE diserve Laravel) | Port Web (FE), Mode FastCGI (Socket/Port), Web Server (Caddy/Nginx) |
 | **2** | **`node-fullstack`** | Frontend statis Node.js + Backend API Node.js | Port Frontend, Port Backend API, Web Server (Caddy/Nginx) |
 | **3** | **`node-api`** | Standalone Node.js murni (tanpa Caddy/Nginx) | Port Aplikasi tunggal |
 | **4** | **`node-laravel`** ✨ | Node.js FE (Static) + Laravel BE via FastCGI Reverse Proxy | Port Web Frontend, Mode FastCGI PHP-FPM, Web Server (Caddy/Nginx) |
+| **5** | **`python-api`** 🐍 | Standalone Python API (Direct Runtime via `run.sh`) | Port Aplikasi tunggal (Default: 8001) |
+| **6** | **`node-python`** 🐍 | Node.js FE (Static) + Python BE via Reverse Proxy | Port Frontend (8080), Port Python BE (8001), Web Server (Caddy/Nginx) |
+| **7** | **`node-frontend`** ⚡ | Frontend statis Node.js murni (SPA / Static Web tanpa BE internal) | Port Web Frontend (Default: 8080), Web Server (Caddy/Nginx) |
 
 ### Detail Khusus Stack 4: `node-laravel`
 Pada stack ini:
@@ -116,6 +123,16 @@ Pada stack ini:
 - Request biasa (`/*`) dilayani langsung oleh web server menuju folder `fe/dist/`.
 - Request API (`/api/*`) dialihkan oleh web server langsung ke **PHP-FPM FastCGI** mengarah ke entry point `be/public/index.php`.
 - **Tidak membutuhkan `artisan serve`** dan tidak memakan port HTTP tambahan untuk backend.
+
+### Detail Khusus Stack 5: `python-api`
+Pada stack ini:
+- Python API berjalan mandiri di bawah user service systemd menggunakan script runner `run.sh`.
+- Script `run.sh` secara cerdas mengaktifkan virtual environment (`.venv` atau `venv`) dan mendeteksi runner (FastAPI/Uvicorn, Gunicorn, `main.py`, `app.py`).
+
+### Detail Khusus Stack 6: `node-python`
+Pada stack ini:
+- Frontend statis berada di `fe/dist/` dan backend Python API berada di folder `be/` dengan script runner `be/run.sh`.
+- Web server (Caddy / Nginx) melayani rute frontend pada port publik dan meneruskan rute `/api/*` secara utuh ke backend Python di `127.0.0.1:portBE`.
 
 ---
 
