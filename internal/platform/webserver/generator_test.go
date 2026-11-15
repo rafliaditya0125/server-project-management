@@ -129,6 +129,30 @@ func TestConfigGenerator(t *testing.T) {
 		t.Errorf("unexpected Node-Python nginx.conf: %s", nginxPyStr)
 	}
 
+	// 1e. Caddy Node Frontend Static Only
+	nodeFeTmpDir, _ := os.MkdirTemp("", "caddy_node_fe_test_*")
+	defer os.RemoveAll(nodeFeTmpDir)
+	if err := gen.GenerateNodeFrontendCaddyfile(nodeFeTmpDir, "8080"); err != nil {
+		t.Fatalf("GenerateNodeFrontendCaddyfile failed: %v", err)
+	}
+	caddyFeData, _ := os.ReadFile(filepath.Join(nodeFeTmpDir, "Caddyfile"))
+	caddyFeStr := string(caddyFeData)
+	if !strings.Contains(caddyFeStr, ":8080") || !strings.Contains(caddyFeStr, "file_server") || !strings.Contains(caddyFeStr, "try_files {path} /index.html") {
+		t.Errorf("unexpected Node-Frontend Caddyfile: %s", caddyFeStr)
+	}
+
+	// 2d. Nginx Node Frontend Static Only
+	nginxFeTmpDir, _ := os.MkdirTemp("", "nginx_node_fe_test_*")
+	defer os.RemoveAll(nginxFeTmpDir)
+	if err := gen.GenerateNodeFrontendNginxConfig(nginxFeTmpDir, "8080"); err != nil {
+		t.Fatalf("GenerateNodeFrontendNginxConfig failed: %v", err)
+	}
+	nginxFeData, _ := os.ReadFile(filepath.Join(nginxFeTmpDir, "nginx.conf"))
+	nginxFeStr := string(nginxFeData)
+	if !strings.Contains(nginxFeStr, "listen 8080;") || !strings.Contains(nginxFeStr, "try_files $uri $uri/ /index.html;") {
+		t.Errorf("unexpected Node-Frontend nginx.conf: %s", nginxFeStr)
+	}
+
 	// 3b. Python Direct run.sh
 	pyTmpDir, _ := os.MkdirTemp("", "python_direct_test_*")
 	defer os.RemoveAll(pyTmpDir)
@@ -173,5 +197,12 @@ func TestConfigGenerator(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(nodePythonTmpDir, "be", "run.sh")); err != nil {
 		t.Errorf("Node-Python be run.sh placeholder missing: %v", err)
+	}
+
+	if err := gen.CreatePlaceholders(nodeFeTmpDir, domain.StackNodeFrontend, "testnodefe", ""); err != nil {
+		t.Fatalf("CreatePlaceholders NodeFrontend failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(nodeFeTmpDir, "dist", "index.html")); err != nil {
+		t.Errorf("Node-Frontend dist index.html placeholder missing: %v", err)
 	}
 }

@@ -74,7 +74,9 @@ Admin akan dipandu melalui tahapan interaktif berikut:
 1. Masukkan nama aplikasi (username) : myapp
 2. Masukkan password user             : ********
    Konfirmasi password                : ********
-3. Pilih Stack Aplikasi               : (1/2/3/4/5/6)
+3. Pilihan Stack Frontend & Backend   :
+   - Pilih Frontend (Node.js atau lewati/diserve backend)
+   - Pilih Backend (Laravel, Node.js, Python, atau lewati jika FE dipilih)
 4. Link repositori git (Opsional)     : https://github.com/org/repo.git
 5. Konfigurasi Port & Web Server      : Port, FastCGI, Web Server pilihan
 6. Konfigurasi Database               : Nama DB, User DB, Password DB, Kredensial Root DB
@@ -99,18 +101,21 @@ Admin akan dipandu melalui tahapan interaktif berikut:
 
 ---
 
-## 4. Penjelasan 6 Pilihan Stack
+## 4. Penjelasan Pilihan Stack
 
-Saat memilih stack di menu opsi 3, berikut karakteristik dan parameter yang dibutuhkan:
+Pemilihan stack di menu opsi 3 dibagi menjadi dua tahap yang fleksibel: **Pilihan Stack Frontend** dan **Pilihan Stack Backend**:
+- **Frontend**: Bisa memilih Node.js (React/Vue/Vite/SPA) atau **dilewati (skip)** jika diserve oleh backend/monolitik.
+- **Backend**: Jika frontend dilewati, backend **wajib diisi**. Jika frontend dipilih, backend bisa dipilih atau dilewati (Frontend Statis murni).
 
 | No | Stack | Deskripsi | Parameter yang Diminta |
 |---|---|---|---|
-| **1** | **`laravel`** | Laravel monolitik via PHP-FPM FastCGI | Port Web (FE), Mode FastCGI (Socket/Port), Web Server (Caddy/Nginx) |
+| **1** | **`laravel`** | Laravel monolitik via PHP-FPM FastCGI (FE diserve Laravel) | Port Web (FE), Mode FastCGI (Socket/Port), Web Server (Caddy/Nginx) |
 | **2** | **`node-fullstack`** | Frontend statis Node.js + Backend API Node.js | Port Frontend, Port Backend API, Web Server (Caddy/Nginx) |
 | **3** | **`node-api`** | Standalone Node.js murni (tanpa Caddy/Nginx) | Port Aplikasi tunggal |
 | **4** | **`node-laravel`** ✨ | Node.js FE (Static) + Laravel BE via FastCGI Reverse Proxy | Port Web Frontend, Mode FastCGI PHP-FPM, Web Server (Caddy/Nginx) |
 | **5** | **`python-api`** 🐍 | Standalone Python API (Direct Runtime via `run.sh`) | Port Aplikasi tunggal (Default: 8001) |
 | **6** | **`node-python`** 🐍 | Node.js FE (Static) + Python BE via Reverse Proxy | Port Frontend (8080), Port Python BE (8001), Web Server (Caddy/Nginx) |
+| **7** | **`node-frontend`** ⚡ | Frontend statis Node.js murni (SPA / Static Web tanpa BE internal) | Port Web Frontend (Default: 8080), Web Server (Caddy/Nginx) |
 
 ### Detail Khusus Stack 4: `node-laravel`
 Pada stack ini:

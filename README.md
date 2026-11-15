@@ -58,7 +58,11 @@ Untuk panduan operasional langkah-demi-langkah yang mendalam, silakan baca dokum
 
 ## 🏗️ Stack Aplikasi yang Didukung
 
-Saat membuat aplikasi baru (`project create`), tersedia 6 pilihan stack:
+Saat membuat aplikasi baru (`project create`), wizard membagi pemilihan stack menjadi:
+1. **Pilihan Frontend**: Node.js (React/Vue/Vite/SPA) atau lewati (skip jika diserve oleh backend/monolitik).
+2. **Pilihan Backend**: Laravel, Node.js, atau Python. *(Catatan: jika frontend dilewati, backend **wajib diisi**; jika frontend dipilih, backend bisa dipilih atau dilewati).*
+
+Kombinasi tersebut menghasilkan 7 opsi stack:
 
 ### 1. `laravel` — Laravel (PHP-FPM)
 Laravel monolitik yang dilayani via **FastCGI** (PHP-FPM) menggunakan Caddy atau Nginx.
@@ -262,6 +266,23 @@ server {
 
 ---
 
+### 7. `node-frontend` — Node.js Frontend Static Only (SPA)
+Frontend statis Node.js (React/Vue/Vite/Svelte/SPA) murni tanpa backend di server internal, diserve langsung dengan Caddy atau Nginx (dengan SPA routing fallback).
+
+```
+[portFE: Caddy/Nginx]
+    └── /*  ──► Static files (dist/index.html)
+```
+
+**Direktori aplikasi:**
+```
+/home/apps/<nama>/
+└── dist/
+    └── index.html   ← File build frontend
+```
+
+---
+
 ## ⚡ Autocompletion Pintar (Cobra Dynamic Completion)
 
 Auto-completion didukung penuh untuk **Bash, Zsh, dan Fish**:
@@ -323,7 +344,7 @@ Ketika dijalankan via `sudo project serve` atau `bin/project-api`:
 │   ├── config/
 │   │   └── config.go               # Registry paths & environment variables
 │   ├── domain/                     # Core Business Entities & Interfaces
-│   │   ├── app.go                  # StackType: laravel, node-fullstack, node-api, node-laravel
+│   │   ├── app.go                  # StackType: laravel, node-fullstack, node-api, node-laravel, python-api, node-python, node-frontend
 │   │   ├── config.go
 │   │   ├── errors.go
 │   │   ├── platform.go

@@ -156,6 +156,28 @@ func (g *ConfigGenerator) GenerateNodePythonCaddyfile(homeDir, portFE, portBE st
 	return os.WriteFile(filepath.Join(homeDir, "Caddyfile"), []byte(content), 0644)
 }
 
+func (g *ConfigGenerator) GenerateNodeFrontendCaddyfile(homeDir, portFE string) error {
+	feRoot := filepath.Join(homeDir, "dist")
+	if _, err := os.Stat(feRoot); os.IsNotExist(err) {
+		if _, errPublic := os.Stat(filepath.Join(homeDir, "public")); errPublic == nil {
+			feRoot = filepath.Join(homeDir, "public")
+		}
+	}
+
+	content := fmt.Sprintf(`{
+    admin off
+}
+
+:%s {
+    root * %s
+    file_server
+    try_files {path} /index.html
+}
+`, portFE, feRoot)
+
+	return os.WriteFile(filepath.Join(homeDir, "Caddyfile"), []byte(content), 0644)
+}
+
 func (g *ConfigGenerator) GenerateCaddySystemdService(systemdDir, appName string) error {
 	if err := os.MkdirAll(systemdDir, 0755); err != nil {
 		return err
@@ -425,6 +447,58 @@ http {
 	return os.WriteFile(filepath.Join(homeDir, "nginx.conf"), []byte(content), 0644)
 }
 
+func (g *ConfigGenerator) GenerateNodeFrontendNginxConfig(homeDir, portFE string) error {
+	// Create tmp directories
+	for _, d := range []string{"client_body", "proxy", "fastcgi", "uwsgi", "scgi"} {
+		if err := os.MkdirAll(filepath.Join(homeDir, "tmp", d), 0755); err != nil {
+			return err
+		}
+	}
+
+	feRoot := filepath.Join(homeDir, "dist")
+	if _, err := os.Stat(feRoot); os.IsNotExist(err) {
+		if _, errPublic := os.Stat(filepath.Join(homeDir, "public")); errPublic == nil {
+			feRoot = filepath.Join(homeDir, "public")
+		}
+	}
+
+	mimeTypes := g.findMimeTypesPath()
+
+	content := fmt.Sprintf(`worker_processes 1;
+pid %s/tmp/nginx.pid;
+error_log %s/tmp/error.log;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include %s;
+    default_type application/octet-stream;
+    access_log %s/tmp/access.log;
+
+    client_body_temp_path %s/tmp/client_body;
+    proxy_temp_path %s/tmp/proxy;
+    fastcgi_temp_path %s/tmp/fastcgi;
+    uwsgi_temp_path %s/tmp/uwsgi;
+    scgi_temp_path %s/tmp/scgi;
+
+    server {
+        listen %s;
+        server_name _;
+        root %s;
+        index index.html;
+
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+    }
+}
+`, homeDir, homeDir, mimeTypes, homeDir, homeDir, homeDir, homeDir, homeDir, homeDir, portFE, feRoot)
+
+	return os.WriteFile(filepath.Join(homeDir, "nginx.conf"), []byte(content), 0644)
+}
+
 func (g *ConfigGenerator) GenerateNginxSystemdService(systemdDir, appName string) error {
 	if err := os.MkdirAll(systemdDir, 0755); err != nil {
 		return err
@@ -530,8 +604,9 @@ func (g *ConfigGenerator) GeneratePythonDirectRunScript(homeDir, portSingle stri
 set -e
 
 # 1. Fallback Server jika belum ada kode aplikasi Python
-if [ ! -f "main.py" ] && [ ! -f "app.py" ] && [ ! -f "requirements.txt" ] && [ ! -f "pyproject.toml" ] && \
-   [ ! -f "backend/main.py" ] && [ ! -f "backend/app.py" ] && [ ! -f "api/main.py" ] && [ ! -f "api/app.py" ]; then
+if [ ! -f "main.py" ] && [ ! -f "app.py" ] && [ ! -f "server.py" ] && [ ! -f "requirements.txt" ] && [ ! -f "pyproject.toml" ] && \
+   [ ! -f "backend/main.py" ] && [ ! -f "backend/app.py" ] && [ ! -f "backend/server.py" ] && \
+   [ ! -f "api/main.py" ] && [ ! -f "api/app.py" ] && [ ! -f "api/server.py" ]; then
     echo "[INFO] Python project files not found. Starting placeholder HTTP server on port ${PORT:-%s}..."
     exec python3 -c "
 import http.server, socketserver, os
@@ -550,9 +625,9 @@ with socketserver.TCPServer(('0.0.0.0', port), Handler) as httpd:
 fi
 
 # 2. Deteksi lokasi working directory
-if [ -d "backend" ] && ([ -f "backend/main.py" ] || [ -f "backend/app.py" ] || [ -f "backend/requirements.txt" ]); then
+if [ -d "backend" ] && ([ -f "backend/main.py" ] || [ -f "backend/app.py" ] || [ -f "backend/server.py" ] || [ -f "backend/requirements.txt" ]); then
     cd backend
-elif [ -d "api" ] && ([ -f "api/main.py" ] || [ -f "api/app.py" ] || [ -f "api/requirements.txt" ]); then
+elif [ -d "api" ] && ([ -f "api/main.py" ] || [ -f "api/app.py" ] || [ -f "api/server.py" ] || [ -f "api/requirements.txt" ]); then
     cd api
 fi
 
@@ -575,6 +650,8 @@ if command -v uvicorn >/dev/null 2>&1; then
         exec uvicorn main:app --host 0.0.0.0 --port "$APP_PORT"
     elif [ -f "app.py" ]; then
         exec uvicorn app:app --host 0.0.0.0 --port "$APP_PORT"
+    elif [ -f "server.py" ]; then
+        exec uvicorn server:app --host 0.0.0.0 --port "$APP_PORT"
     elif [ -f "app/main.py" ]; then
         exec uvicorn app.main:app --host 0.0.0.0 --port "$APP_PORT"
     fi
@@ -585,6 +662,8 @@ if command -v gunicorn >/dev/null 2>&1; then
         exec gunicorn wsgi:application --bind "0.0.0.0:$APP_PORT"
     elif [ -f "app.py" ]; then
         exec gunicorn app:app --bind "0.0.0.0:$APP_PORT"
+    elif [ -f "server.py" ]; then
+        exec gunicorn server:app --bind "0.0.0.0:$APP_PORT"
     elif [ -f "main.py" ]; then
         exec gunicorn main:app --bind "0.0.0.0:$APP_PORT"
     fi
@@ -592,10 +671,12 @@ fi
 
 if [ -f "main.py" ]; then
     exec python3 main.py
+elif [ -f "server.py" ]; then
+    exec python3 server.py
 elif [ -f "app.py" ]; then
     exec python3 app.py
 else
-    echo "[ERROR] No valid Python entry point found (main.py, app.py, uvicorn, or gunicorn)."
+    echo "[ERROR] No valid Python entry point found (main.py, app.py, server.py, uvicorn, or gunicorn)."
     exit 1
 fi
 `, portSingle, portSingle, portSingle)
@@ -713,6 +794,36 @@ func (g *ConfigGenerator) CreatePlaceholders(homeDir string, stack domain.StackT
 		beDir := filepath.Join(homeDir, "be")
 		_ = os.MkdirAll(beDir, 0755)
 		_ = g.GeneratePythonDirectRunScript(beDir, portBE)
+	case domain.StackNodeFrontend:
+		distDir := filepath.Join(homeDir, "dist")
+		_ = os.MkdirAll(distDir, 0755)
+		indexPath := filepath.Join(distDir, "index.html")
+		if _, err := os.Stat(indexPath); os.IsNotExist(err) {
+			content := fmt.Sprintf(`<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aplikasi %s</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #f8fafc; }
+        .card { text-align: center; padding: 2.5rem; background: #1e293b; border-radius: 1rem; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3); border: 1px solid #334155; max-width: 500px; }
+        h1 { color: #38bdf8; margin-bottom: 0.5rem; }
+        p { color: #94a3b8; line-height: 1.6; }
+        .badge { display: inline-block; padding: 0.25rem 0.75rem; background: #0369a1; color: #e0f2fe; border-radius: 9999px; font-size: 0.875rem; font-weight: 500; margin-bottom: 1rem; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="badge">Node.js Frontend Static / SPA</div>
+        <h1>Aplikasi '%s' Siap!</h1>
+        <p>Web server berhasil dikonfigurasi. Silakan letakkan file hasil build frontend Anda (Vite, React, Vue, Svelte) di direktori <code>dist/</code>.</p>
+    </div>
+</body>
+</html>
+`, appName, appName)
+			_ = os.WriteFile(indexPath, []byte(content), 0644)
+		}
 	}
 	return nil
 }

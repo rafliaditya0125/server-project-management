@@ -48,6 +48,8 @@ type WebServerConfigGenerator interface {
 	GeneratePythonDirectSystemdService(systemdDir, appName, portSingle string) error
 	GenerateNodePythonCaddyfile(homeDir, portFE, portBE string) error
 	GenerateNodePythonNginxConfig(homeDir, portFE, portBE string) error
+	GenerateNodeFrontendCaddyfile(homeDir, portFE string) error
+	GenerateNodeFrontendNginxConfig(homeDir, portFE string) error
 
 	CreatePlaceholders(homeDir string, stack StackType, appName string, portBE string) error
 	GetCaddyPath() string

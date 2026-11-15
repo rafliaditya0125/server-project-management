@@ -12,6 +12,7 @@ const (
 	StackNodeLaravel   StackType = "node-laravel"
 	StackPythonAPI     StackType = "python-api"
 	StackNodePython    StackType = "node-python"
+	StackNodeFrontend  StackType = "node-frontend"
 )
 
 // WebServerType represents the web server chosen for an application.

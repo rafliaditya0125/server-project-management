@@ -152,6 +152,12 @@ func (m *mockWebGen) GenerateNodePythonCaddyfile(h, fe, be string) error {
 func (m *mockWebGen) GenerateNodePythonNginxConfig(h, fe, be string) error {
 	return nil
 }
+func (m *mockWebGen) GenerateNodeFrontendCaddyfile(h, fe string) error {
+	return nil
+}
+func (m *mockWebGen) GenerateNodeFrontendNginxConfig(h, fe string) error {
+	return nil
+}
 func (m *mockWebGen) CreatePlaceholders(h string, s domain.StackType, a, p string) error {
 	return nil
 }

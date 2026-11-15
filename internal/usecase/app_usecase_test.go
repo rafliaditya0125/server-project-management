@@ -173,6 +173,12 @@ func (m *mockWebGen) GenerateNodePythonCaddyfile(homeDir, portFE, portBE string)
 func (m *mockWebGen) GenerateNodePythonNginxConfig(homeDir, portFE, portBE string) error {
 	return nil
 }
+func (m *mockWebGen) GenerateNodeFrontendCaddyfile(homeDir, portFE string) error {
+	return nil
+}
+func (m *mockWebGen) GenerateNodeFrontendNginxConfig(homeDir, portFE string) error {
+	return nil
+}
 func (m *mockWebGen) CreatePlaceholders(homeDir string, stack domain.StackType, appName string, portBE string) error {
 	return nil
 }
@@ -288,7 +294,27 @@ func TestAppUsecase(t *testing.T) {
 		t.Errorf("unexpected node-python app metadata: %+v", nodePyApp)
 	}
 
+	// 6. Create Node Frontend Static Only App
+	nodeFeDto := &domain.CreateAppDTO{
+		Name:         "nodefeapp",
+		UserPassword: "password123",
+		Stack:        domain.StackNodeFrontend,
+		PortFE:       "8080",
+		WebServer:    domain.WebServerCaddy,
+		DBName:       "nodefe_db",
+		DBUser:       "nodefe_u",
+		DBPassword:   "dbpass123",
+	}
+	nodeFeApp, err := uc.Create(nodeFeDto)
+	if err != nil {
+		t.Fatalf("Create Node Frontend failed: %v", err)
+	}
+	if nodeFeApp.Stack != domain.StackNodeFrontend || nodeFeApp.PortFE != "8080" {
+		t.Errorf("unexpected node-frontend app metadata: %+v", nodeFeApp)
+	}
+
 	// Clean up
 	_ = uc.Delete(&domain.DeleteAppDTO{Name: "pyapp"})
 	_ = uc.Delete(&domain.DeleteAppDTO{Name: "nodepyapp"})
+	_ = uc.Delete(&domain.DeleteAppDTO{Name: "nodefeapp"})
 }
