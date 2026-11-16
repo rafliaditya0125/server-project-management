@@ -13,6 +13,8 @@ const (
 	StackPythonAPI     StackType = "python-api"
 	StackNodePython    StackType = "node-python"
 	StackNodeFrontend  StackType = "node-frontend"
+	StackGoAPI         StackType = "go-api"
+	StackNodeGo        StackType = "node-go"
 )
 
 // WebServerType represents the web server chosen for an application.
@@ -102,6 +104,7 @@ type SetupOptions struct {
 	PHP         bool     `json:"php"`
 	Node        bool     `json:"node"`
 	Python      bool     `json:"python"`
+	Go          bool     `json:"go"`
 	Web         bool     `json:"web"`
 	DB          bool     `json:"db"`
 	FastCGI     bool     `json:"fastcgi"`

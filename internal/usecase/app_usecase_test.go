@@ -179,6 +179,18 @@ func (m *mockWebGen) GenerateNodeFrontendCaddyfile(homeDir, portFE string) error
 func (m *mockWebGen) GenerateNodeFrontendNginxConfig(homeDir, portFE string) error {
 	return nil
 }
+func (m *mockWebGen) GenerateGoDirectRunScript(homeDir, portSingle string) error {
+	return nil
+}
+func (m *mockWebGen) GenerateGoDirectSystemdService(systemdDir, appName, portSingle string) error {
+	return nil
+}
+func (m *mockWebGen) GenerateNodeGoCaddyfile(homeDir, portFE, portBE string) error {
+	return nil
+}
+func (m *mockWebGen) GenerateNodeGoNginxConfig(homeDir, portFE, portBE string) error {
+	return nil
+}
 func (m *mockWebGen) CreatePlaceholders(homeDir string, stack domain.StackType, appName string, portBE string) error {
 	return nil
 }
@@ -313,8 +325,48 @@ func TestAppUsecase(t *testing.T) {
 		t.Errorf("unexpected node-frontend app metadata: %+v", nodeFeApp)
 	}
 
+	// 7. Create Go API App
+	goDto := &domain.CreateAppDTO{
+		Name:         "goapp",
+		UserPassword: "password123",
+		Stack:        domain.StackGoAPI,
+		PortSingle:   "8080",
+		DBName:       "go_db",
+		DBUser:       "go_u",
+		DBPassword:   "dbpass123",
+	}
+	goApp, err := uc.Create(goDto)
+	if err != nil {
+		t.Fatalf("Create Go API failed: %v", err)
+	}
+	if goApp.Stack != domain.StackGoAPI || goApp.Port != "8080" {
+		t.Errorf("unexpected go-api app metadata: %+v", goApp)
+	}
+
+	// 8. Create Node Go Fullstack App
+	nodeGoDto := &domain.CreateAppDTO{
+		Name:         "nodegoapp",
+		UserPassword: "password123",
+		Stack:        domain.StackNodeGo,
+		PortFE:       "8080",
+		PortBE:       "8002",
+		WebServer:    domain.WebServerCaddy,
+		DBName:       "nodego_db",
+		DBUser:       "nodego_u",
+		DBPassword:   "dbpass123",
+	}
+	nodeGoApp, err := uc.Create(nodeGoDto)
+	if err != nil {
+		t.Fatalf("Create Node-Go failed: %v", err)
+	}
+	if nodeGoApp.Stack != domain.StackNodeGo || nodeGoApp.PortFE != "8080" || nodeGoApp.PortBE != "8002" {
+		t.Errorf("unexpected node-go app metadata: %+v", nodeGoApp)
+	}
+
 	// Clean up
 	_ = uc.Delete(&domain.DeleteAppDTO{Name: "pyapp"})
 	_ = uc.Delete(&domain.DeleteAppDTO{Name: "nodepyapp"})
 	_ = uc.Delete(&domain.DeleteAppDTO{Name: "nodefeapp"})
+	_ = uc.Delete(&domain.DeleteAppDTO{Name: "goapp"})
+	_ = uc.Delete(&domain.DeleteAppDTO{Name: "nodegoapp"})
 }

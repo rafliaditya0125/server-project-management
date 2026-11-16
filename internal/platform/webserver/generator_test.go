@@ -153,6 +153,30 @@ func TestConfigGenerator(t *testing.T) {
 		t.Errorf("unexpected Node-Frontend nginx.conf: %s", nginxFeStr)
 	}
 
+	// 1f. Caddy Node+Go (Reverse Proxy /api/*)
+	nodeGoTmpDir, _ := os.MkdirTemp("", "caddy_node_go_test_*")
+	defer os.RemoveAll(nodeGoTmpDir)
+	if err := gen.GenerateNodeGoCaddyfile(nodeGoTmpDir, "8080", "8002"); err != nil {
+		t.Fatalf("GenerateNodeGoCaddyfile failed: %v", err)
+	}
+	caddyNGoData, _ := os.ReadFile(filepath.Join(nodeGoTmpDir, "Caddyfile"))
+	caddyNGoStr := string(caddyNGoData)
+	if !strings.Contains(caddyNGoStr, ":8080") || !strings.Contains(caddyNGoStr, "reverse_proxy 127.0.0.1:8002") || !strings.Contains(caddyNGoStr, "handle /api/*") {
+		t.Errorf("unexpected Node-Go Caddyfile: %s", caddyNGoStr)
+	}
+
+	// 2e. Nginx Node+Go (Reverse Proxy /api)
+	nginxGoTmpDir, _ := os.MkdirTemp("", "nginx_node_go_test_*")
+	defer os.RemoveAll(nginxGoTmpDir)
+	if err := gen.GenerateNodeGoNginxConfig(nginxGoTmpDir, "8080", "8002"); err != nil {
+		t.Fatalf("GenerateNodeGoNginxConfig failed: %v", err)
+	}
+	nginxGoData, _ := os.ReadFile(filepath.Join(nginxGoTmpDir, "nginx.conf"))
+	nginxGoStr := string(nginxGoData)
+	if !strings.Contains(nginxGoStr, "listen 8080;") || !strings.Contains(nginxGoStr, "proxy_pass http://127.0.0.1:8002;") {
+		t.Errorf("unexpected Node-Go nginx.conf: %s", nginxGoStr)
+	}
+
 	// 3b. Python Direct run.sh
 	pyTmpDir, _ := os.MkdirTemp("", "python_direct_test_*")
 	defer os.RemoveAll(pyTmpDir)
@@ -171,6 +195,26 @@ func TestConfigGenerator(t *testing.T) {
 	pySvcData, _ := os.ReadFile(filepath.Join(pyTmpDir, "testpy.service"))
 	if !strings.Contains(string(pySvcData), "Environment=PORT=8001") || !strings.Contains(string(pySvcData), "PYTHONUNBUFFERED=1") {
 		t.Errorf("unexpected Python systemd service content: %s", string(pySvcData))
+	}
+
+	// 3d. Go Direct run.sh
+	goTmpDir, _ := os.MkdirTemp("", "go_direct_test_*")
+	defer os.RemoveAll(goTmpDir)
+	if err := gen.GenerateGoDirectRunScript(goTmpDir, "8080"); err != nil {
+		t.Fatalf("GenerateGoDirectRunScript failed: %v", err)
+	}
+	goRunData, _ := os.ReadFile(filepath.Join(goTmpDir, "run.sh"))
+	if !strings.Contains(string(goRunData), "8080") || !strings.Contains(string(goRunData), "go build") {
+		t.Errorf("unexpected Go run.sh content: %s", string(goRunData))
+	}
+
+	// 3e. Go Direct systemd service
+	if err := gen.GenerateGoDirectSystemdService(goTmpDir, "testgo", "8080"); err != nil {
+		t.Fatalf("GenerateGoDirectSystemdService failed: %v", err)
+	}
+	goSvcData, _ := os.ReadFile(filepath.Join(goTmpDir, "testgo.service"))
+	if !strings.Contains(string(goSvcData), "Environment=PORT=8080") || !strings.Contains(string(goSvcData), "GIN_MODE=release") {
+		t.Errorf("unexpected Go systemd service content: %s", string(goSvcData))
 	}
 
 	// 4. Placeholders
@@ -204,5 +248,23 @@ func TestConfigGenerator(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(nodeFeTmpDir, "dist", "index.html")); err != nil {
 		t.Errorf("Node-Frontend dist index.html placeholder missing: %v", err)
+	}
+
+	// 4c. Go Placeholders
+	if err := gen.CreatePlaceholders(goTmpDir, domain.StackGoAPI, "testgo", "8080"); err != nil {
+		t.Fatalf("CreatePlaceholders Go failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(goTmpDir, "run.sh")); err != nil {
+		t.Errorf("Go run.sh placeholder missing: %v", err)
+	}
+
+	if err := gen.CreatePlaceholders(nodeGoTmpDir, domain.StackNodeGo, "testnodego", "8002"); err != nil {
+		t.Fatalf("CreatePlaceholders NodeGo failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(nodeGoTmpDir, "fe", "dist", "index.html")); err != nil {
+		t.Errorf("Node-Go fe index.html placeholder missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(nodeGoTmpDir, "be", "run.sh")); err != nil {
+		t.Errorf("Node-Go be run.sh placeholder missing: %v", err)
 	}
 }

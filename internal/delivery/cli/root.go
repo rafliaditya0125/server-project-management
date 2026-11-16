@@ -53,8 +53,10 @@ STACK YANG DIDUKUNG:
   5. Python (Standalone API Only - Direct Python Runtime)
   6. Node.js FE + Python BE (Reverse Proxy)
   7. Node.js (Frontend Static Only / SPA)
+  8. Go (Standalone API Only - Direct Go Runtime)
+  9. Node.js FE + Go BE (Reverse Proxy)
 
-WEB SERVER YANG DIDUKUNG (Stack 1, 2, 4, 6 & 7):
+WEB SERVER YANG DIDUKUNG (Stack 1, 2, 4, 6, 7 & 9):
   1. Caddy (Ringkas & zero-temp folder)
   2. Nginx (User-space instance)
 

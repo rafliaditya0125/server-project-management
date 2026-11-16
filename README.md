@@ -41,10 +41,10 @@ Untuk panduan operasional langkah-demi-langkah yang mendalam, silakan baca dokum
 ## 📌 Daftar Perintah CLI
 
 - **`help`** : Menampilkan panduan dan daftar opsi command.
-- **`setup [flags]`** : Setup dependensi server (PHP, Composer, Node.js, NPM, Python 3, Pip, Virtualenv, Caddy, Nginx, MariaDB Client, Fish Shell, Symlink global `/usr/local/bin/project`, Shell Autocompletion) serta konfigurasi mode FastCGI PHP-FPM (Unix Socket / TCP Port).
+- **`setup [flags]`** : Setup dependensi server (PHP, Composer, Node.js, NPM, Python 3, Pip, Virtualenv, Toolchain Golang, Caddy, Nginx, MariaDB Client, Fish Shell, Symlink global `/usr/local/bin/project`, Shell Autocompletion) serta konfigurasi mode FastCGI PHP-FPM (Unix Socket / TCP Port).
   - Tanpa opsi: Menjalankan semua tahap secara otomatis.
-  - Flag tahap: `--php`, `--node`, `--python`, `--web`, `--db`, `--fastcgi`, `--symlink`, `--completion`, `--all`.
-  - Pengecualian: `-e` atau `--except=<tahap1,tahap2>` (contoh: `--except=db` atau `-e php,fastcgi,python`).
+  - Flag tahap: `--php`, `--node`, `--python`, `--go`, `--web`, `--db`, `--fastcgi`, `--symlink`, `--completion`, `--all`.
+  - Pengecualian: `-e` atau `--except=<tahap1,tahap2>` (contoh: `--except=db` atau `-e php,fastcgi,python,go`).
   - Interaktif: `--interactive` atau `-i`.
 - **`create`** : Membuat user sistem terisolasi, home folder `/home/apps/<nama-aplikasi>`, database & user MySQL, serta service systemd user sesuai stack dan pilihan web server (Caddy / Nginx).
 - **`delete <nama>`** : Menghapus user sistem, direktori home aplikasi, database & user MySQL, dan service systemd user.
@@ -60,9 +60,9 @@ Untuk panduan operasional langkah-demi-langkah yang mendalam, silakan baca dokum
 
 Saat membuat aplikasi baru (`project create`), wizard membagi pemilihan stack menjadi:
 1. **Pilihan Frontend**: Node.js (React/Vue/Vite/SPA) atau lewati (skip jika diserve oleh backend/monolitik).
-2. **Pilihan Backend**: Laravel, Node.js, atau Python. *(Catatan: jika frontend dilewati, backend **wajib diisi**; jika frontend dipilih, backend bisa dipilih atau dilewati).*
+2. **Pilihan Backend**: Laravel, Node.js, Python, atau Go. *(Catatan: jika frontend dilewati, backend **wajib diisi**; jika frontend dipilih, backend bisa dipilih atau dilewati).*
 
-Kombinasi tersebut menghasilkan 7 opsi stack:
+Kombinasi tersebut menghasilkan 9 opsi stack:
 
 ### 1. `laravel` — Laravel (PHP-FPM)
 Laravel monolitik yang dilayani via **FastCGI** (PHP-FPM) menggunakan Caddy atau Nginx.
@@ -283,6 +283,85 @@ Frontend statis Node.js (React/Vue/Vite/Svelte/SPA) murni tanpa backend di serve
 
 ---
 
+### 8. `go-api` — Go Standalone API
+Aplikasi Golang berjalan langsung sebagai user service systemd melalui script runner `run.sh`. Mendukung eksekusi pre-compiled binary (`app`, `main`, `server`, atau di `bin/`), otomatisasi kompilasi (`go build`) jika ada source code (`go.mod`/`main.go`), serta fallback HTTP placeholder server sebelum deployment.
+
+```
+[portSingle: Go API langsung via run.sh (Default port: 8080)]
+```
+
+**Direktori aplikasi:**
+```
+/home/apps/<nama>/
+├── run.sh           ← Script entrypoint & auto-detect (auto-generated)
+├── go.mod           ← Dependensi Go (opsional saat deploy)
+└── main.go / app    ← Source code atau pre-compiled binary
+```
+
+---
+
+### 9. `node-go` — Node.js FE + Go BE (Reverse Proxy)
+Frontend Node.js (React/Vue/SPA) + Backend Go API dilayani oleh satu web server (Caddy / Nginx). Rute statis `/*` diarahkan ke build output frontend (`fe/dist/`), sedangkan rute `/api/*` diteruskan (*reverse proxied*) ke backend Go di `127.0.0.1:portBE` (default port BE: 8002).
+
+```
+[portFE: Caddy/Nginx]
+    ├── /*      ──► Static files (fe/dist/)
+    └── /api/*  ──► reverse_proxy 127.0.0.1:portBE (Go API via be/run.sh)
+```
+
+**Konfigurasi Caddy (`Caddyfile`):**
+```caddyfile
+{
+    admin off
+}
+
+:8080 {
+    root * /home/apps/<nama>/fe/dist
+    file_server
+
+    handle /api/* {
+        reverse_proxy 127.0.0.1:8002
+    }
+
+    try_files {path} /index.html
+}
+```
+
+**Konfigurasi Nginx (`nginx.conf`):**
+```nginx
+server {
+    listen 8080;
+
+    location /api {
+        proxy_pass http://127.0.0.1:8002;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    location / {
+        root /home/apps/<nama>/fe/dist;
+        index index.html;
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+**Direktori aplikasi:**
+```
+/home/apps/<nama>/
+├── fe/              ← Repo / hasil build frontend (Node.js)
+│   └── dist/
+│       └── index.html
+└── be/              ← Kode sumber atau binary Go API
+    ├── run.sh       ← Runner script backend (auto-generated)
+    └── main.go      ← Entry point API
+```
+
+---
+
 ## ⚡ Autocompletion Pintar (Cobra Dynamic Completion)
 
 Auto-completion didukung penuh untuk **Bash, Zsh, dan Fish**:
@@ -344,7 +423,7 @@ Ketika dijalankan via `sudo project serve` atau `bin/project-api`:
 │   ├── config/
 │   │   └── config.go               # Registry paths & environment variables
 │   ├── domain/                     # Core Business Entities & Interfaces
-│   │   ├── app.go                  # StackType: laravel, node-fullstack, node-api, node-laravel, python-api, node-python, node-frontend
+│   │   ├── app.go                  # StackType: laravel, node-fullstack, node-api, node-laravel, python-api, node-python, node-frontend, go-api, node-go
 │   │   ├── config.go
 │   │   ├── errors.go
 │   │   ├── platform.go

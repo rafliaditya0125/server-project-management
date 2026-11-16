@@ -76,7 +76,7 @@ Admin akan dipandu melalui tahapan interaktif berikut:
    Konfirmasi password                : ********
 3. Pilihan Stack Frontend & Backend   :
    - Pilih Frontend (Node.js atau lewati/diserve backend)
-   - Pilih Backend (Laravel, Node.js, Python, atau lewati jika FE dipilih)
+   - Pilih Backend (Laravel, Node.js, Python, Go, atau lewati jika FE dipilih)
 4. Link repositori git (Opsional)     : https://github.com/org/repo.git
 5. Konfigurasi Port & Web Server      : Port, FastCGI, Web Server pilihan
 6. Konfigurasi Database               : Nama DB, User DB, Password DB, Kredensial Root DB
@@ -116,6 +116,8 @@ Pemilihan stack di menu opsi 3 dibagi menjadi dua tahap yang fleksibel: **Piliha
 | **5** | **`python-api`** 🐍 | Standalone Python API (Direct Runtime via `run.sh`) | Port Aplikasi tunggal (Default: 8001) |
 | **6** | **`node-python`** 🐍 | Node.js FE (Static) + Python BE via Reverse Proxy | Port Frontend (8080), Port Python BE (8001), Web Server (Caddy/Nginx) |
 | **7** | **`node-frontend`** ⚡ | Frontend statis Node.js murni (SPA / Static Web tanpa BE internal) | Port Web Frontend (Default: 8080), Web Server (Caddy/Nginx) |
+| **8** | **`go-api`** 🐹 | Standalone Go API (Direct Go Runtime via `run.sh`) | Port Aplikasi tunggal (Default: 8080) |
+| **9** | **`node-go`** 🐹 | Node.js FE (Static) + Go BE via Reverse Proxy | Port Frontend (8080), Port Go BE (8002), Web Server (Caddy/Nginx) |
 
 ### Detail Khusus Stack 4: `node-laravel`
 Pada stack ini:
@@ -133,6 +135,16 @@ Pada stack ini:
 Pada stack ini:
 - Frontend statis berada di `fe/dist/` dan backend Python API berada di folder `be/` dengan script runner `be/run.sh`.
 - Web server (Caddy / Nginx) melayani rute frontend pada port publik dan meneruskan rute `/api/*` secara utuh ke backend Python di `127.0.0.1:portBE`.
+
+### Detail Khusus Stack 8: `go-api`
+Pada stack ini:
+- Go API berjalan mandiri di bawah user service systemd menggunakan script runner `run.sh`.
+- Script `run.sh` memprioritaskan binary siap jalan (`app`, `main`, `server`, atau `bin/*`). Jika belum ada binary tapi ada kode sumber (`go.mod`/`main.go`), otomatis mengompilasi (`go build -o app .`) lalu mengeksekusinya. Jika belum ada kode, menjalankan fallback HTTP placeholder.
+
+### Detail Khusus Stack 9: `node-go`
+Pada stack ini:
+- Frontend statis berada di `fe/dist/` dan backend Go API berada di direktori `be/` dengan runner `be/run.sh`.
+- Web server (Caddy / Nginx) melayani rute frontend pada port publik dan mem-proxy rute `/api/*` ke backend Go di `127.0.0.1:portBE` (default: 8002).
 
 ---
 

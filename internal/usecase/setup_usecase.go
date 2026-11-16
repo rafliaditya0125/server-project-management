@@ -91,17 +91,19 @@ func (u *SetupUsecase) Execute(opts *domain.SetupOptions) error {
 	runPHP := opts.PHP
 	runNode := opts.Node
 	runPython := opts.Python
+	runGo := opts.Go
 	runWeb := opts.Web
 	runDB := opts.DB
 	runFastCGI := opts.FastCGI
 
 	// If no specific flag set or All is true, enable all stages
-	if opts.All || (!runSymlink && !runCompletion && !runPHP && !runNode && !runPython && !runWeb && !runDB && !runFastCGI) {
+	if opts.All || (!runSymlink && !runCompletion && !runPHP && !runNode && !runPython && !runGo && !runWeb && !runDB && !runFastCGI) {
 		runSymlink = true
 		runCompletion = true
 		runPHP = true
 		runNode = true
 		runPython = true
+		runGo = true
 		runWeb = true
 		runDB = true
 		runFastCGI = true
@@ -117,6 +119,8 @@ func (u *SetupUsecase) Execute(opts *domain.SetupOptions) error {
 			runNode = false
 		case "python", "pip", "py", "venv":
 			runPython = false
+		case "go", "golang":
+			runGo = false
 		case "web", "webserver", "webservers", "caddy", "nginx":
 			runWeb = false
 		case "db", "shell", "shell-db", "fish", "mariadb", "mysql":
@@ -134,7 +138,7 @@ func (u *SetupUsecase) Execute(opts *domain.SetupOptions) error {
 		}
 	}
 
-	if !runSymlink && !runCompletion && !runPHP && !runNode && !runPython && !runWeb && !runDB && !runFastCGI {
+	if !runSymlink && !runCompletion && !runPHP && !runNode && !runPython && !runGo && !runWeb && !runDB && !runFastCGI {
 		logger.Warn("Tidak ada tahap setup yang dijalankan karena semua tahap dikecualikan.")
 		return nil
 	}
@@ -167,6 +171,12 @@ func (u *SetupUsecase) Execute(opts *domain.SetupOptions) error {
 	if runPython {
 		if err := u.pkgInstaller.InstallPythonAndPip(osDistro); err != nil {
 			logger.Error("Gagal menginstal Python & Pip: %v", err)
+		}
+	}
+
+	if runGo {
+		if err := u.pkgInstaller.InstallGo(osDistro); err != nil {
+			logger.Error("Gagal menginstal Toolchain Golang: %v", err)
 		}
 	}
 

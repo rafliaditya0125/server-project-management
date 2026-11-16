@@ -135,6 +135,35 @@ func (i *PackageInstaller) InstallPythonAndPip(osDistro string) error {
 	return nil
 }
 
+func (i *PackageInstaller) InstallGo(osDistro string) error {
+	logger.Info("Menginstal Toolchain Golang (Go compiler) untuk OS: %s...", osDistro)
+
+	switch osDistro {
+	case "arch":
+		if err := i.runCommand("pacman", "-Sy", "--noconfirm", "--needed", "go"); err != nil {
+			return err
+		}
+	case "debian":
+		_ = i.runCommand("apt-get", "update")
+		cmd := exec.Command("apt-get", "install", "-y", "golang-go", "build-essential")
+		cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+	case "fedora":
+		if err := i.runCommand("dnf", "install", "-y", "golang"); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("%w: %s", domain.ErrUnknownOS, osDistro)
+	}
+
+	logger.Success("Toolchain Golang berhasil diinstal!")
+	return nil
+}
+
 func (i *PackageInstaller) InstallWebServers(osDistro string) error {
 	logger.Info("Menginstal Web Server (Caddy & Nginx) untuk OS: %s...", osDistro)
 

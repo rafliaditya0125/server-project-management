@@ -397,6 +397,78 @@ Stack ini menggabungkan frontend modern berbasis Node.js (Vite, React, Vue, Svel
 
 ---
 
+### Stack 8: Go Standalone API
+Pada stack ini, aplikasi Go berjalan mandiri di bawah user service systemd yang mengeksekusi script `run.sh` secara langsung tanpa reverse proxy web server wrapper.
+
+#### 📁 Struktur Direktori yang Diharapkan:
+```text
+/home/apps/myapp/
+├── run.sh              <-- Script runner (dihasilkan otomatis)
+├── go.mod              <-- Dependensi modul Go (opsional)
+├── main.go             <-- Source code entrypoint
+└── app                 <-- Pre-compiled binary (opsional)
+```
+
+#### 🚀 Langkah-langkah Deployment:
+1. **Letakkan Kode atau Binary**:
+   - **Opsi A (Source Code)**: Letakkan `go.mod`, `main.go` (atau folder `cmd/`).
+   - **Opsi B (Pre-compiled Binary)**: Unggah file binary executable Anda (beri nama `app`, `main`, atau `server`) dan pastikan izin eksekusi aktif (`chmod +x app`).
+2. **Uji Script Runner**:
+   ```bash
+   ./run.sh
+   ```
+   Script `run.sh` otomatis mendeteksi:
+   - Binary executable (`./app`, `./main`, `./server`, atau `bin/*`).
+   - Jika binary belum ada namun terdapat `main.go` / `go.mod`, otomatis menjalankan `go build -o app .` lalu mengeksekusinya.
+3. **Restart Service Systemd**:
+   ```bash
+   systemctl --user restart myapp
+   ```
+4. **Cek Status**:
+   ```bash
+   systemctl --user status myapp
+   ```
+
+---
+
+### Stack 9: Node.js FE + Go BE (Reverse Proxy)
+Kombinasi Frontend statis (React/Vue/Vite/Svelte) dan Backend Go API yang dilayani oleh **satu web server** (Caddy / Nginx).
+
+#### 📁 Struktur Direktori yang Diharapkan:
+```text
+/home/apps/myapp/
+├── fe/                 <-- Repositori / sumber frontend Node.js
+│   └── dist/           <-- Hasil build statis (index.html, assets/)
+├── be/                 <-- Repositori / sumber Go backend
+│   ├── run.sh          <-- Runner backend Go
+│   ├── go.mod
+│   └── main.go (atau binary app)
+└── Caddyfile (atau nginx.conf)
+```
+
+#### 🚀 Langkah-langkah Deployment:
+1. **Build Frontend**:
+   ```bash
+   cd /home/apps/myapp/fe
+   npm install
+   npm run build
+   # Pastikan output hasil build berada di /home/apps/myapp/fe/dist/
+   ```
+2. **Setup & Jalankan Backend Go**:
+   ```bash
+   cd /home/apps/myapp/be
+   ./run.sh
+   ```
+3. **Restart Web Server**:
+   ```bash
+   systemctl --user restart myapp
+   ```
+> 🎯 **Cara Kerja Rute:**
+> - Buka `http://103.xx.xx.xx:8080/` -> Menampilkan UI frontend SPA Anda.
+> - Request ke `http://103.xx.xx.xx:8080/api/items` -> Diteruskan ke backend Go pada `http://127.0.0.1:8002/api/items`.
+
+---
+
 ## 4. Kustomisasi Caddyfile & nginx.conf (Fleksibilitas Struktur Folder)
 
 Setiap aplikasi memiliki file konfigurasi web server bawaan di `/home/apps/myapp/` (`Caddyfile` atau `nginx.conf`). File ini **100% milik Anda** (`myapp:myapp`), sehingga Anda bebas mengeditnya langsung jika arsitektur kode atau nama folder project Anda berbeda dari default generator.

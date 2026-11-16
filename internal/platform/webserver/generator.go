@@ -178,6 +178,34 @@ func (g *ConfigGenerator) GenerateNodeFrontendCaddyfile(homeDir, portFE string) 
 	return os.WriteFile(filepath.Join(homeDir, "Caddyfile"), []byte(content), 0644)
 }
 
+func (g *ConfigGenerator) GenerateNodeGoCaddyfile(homeDir, portFE, portBE string) error {
+	feRoot := filepath.Join(homeDir, "fe", "dist")
+	if _, err := os.Stat(feRoot); os.IsNotExist(err) {
+		feRoot = filepath.Join(homeDir, "dist")
+		if _, errPublic := os.Stat(filepath.Join(homeDir, "public")); errPublic == nil {
+			feRoot = filepath.Join(homeDir, "public")
+		}
+	}
+
+	content := fmt.Sprintf(`{
+    admin off
+}
+
+:%s {
+    root * %s
+    file_server
+
+    handle /api/* {
+        reverse_proxy 127.0.0.1:%s
+    }
+
+    try_files {path} /index.html
+}
+`, portFE, feRoot, portBE)
+
+	return os.WriteFile(filepath.Join(homeDir, "Caddyfile"), []byte(content), 0644)
+}
+
 func (g *ConfigGenerator) GenerateCaddySystemdService(systemdDir, appName string) error {
 	if err := os.MkdirAll(systemdDir, 0755); err != nil {
 		return err
@@ -499,6 +527,68 @@ http {
 	return os.WriteFile(filepath.Join(homeDir, "nginx.conf"), []byte(content), 0644)
 }
 
+func (g *ConfigGenerator) GenerateNodeGoNginxConfig(homeDir, portFE, portBE string) error {
+	// Create tmp directories
+	for _, d := range []string{"client_body", "proxy", "fastcgi", "uwsgi", "scgi"} {
+		if err := os.MkdirAll(filepath.Join(homeDir, "tmp", d), 0755); err != nil {
+			return err
+		}
+	}
+
+	feRoot := filepath.Join(homeDir, "fe", "dist")
+	if _, err := os.Stat(feRoot); os.IsNotExist(err) {
+		feRoot = filepath.Join(homeDir, "dist")
+		if _, errPublic := os.Stat(filepath.Join(homeDir, "public")); errPublic == nil {
+			feRoot = filepath.Join(homeDir, "public")
+		}
+	}
+
+	mimeTypes := g.findMimeTypesPath()
+
+	content := fmt.Sprintf(`worker_processes 1;
+pid %s/tmp/nginx.pid;
+error_log %s/tmp/error.log;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include %s;
+    default_type application/octet-stream;
+    access_log %s/tmp/access.log;
+
+    client_body_temp_path %s/tmp/client_body;
+    proxy_temp_path %s/tmp/proxy;
+    fastcgi_temp_path %s/tmp/fastcgi;
+    uwsgi_temp_path %s/tmp/uwsgi;
+    scgi_temp_path %s/tmp/scgi;
+
+    server {
+        listen %s;
+        server_name _;
+
+        location /api {
+            proxy_pass http://127.0.0.1:%s;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_cache_bypass $http_upgrade;
+        }
+
+        location / {
+            root %s;
+            index index.html;
+            try_files $uri $uri/ /index.html;
+        }
+    }
+}
+`, homeDir, homeDir, mimeTypes, homeDir, homeDir, homeDir, homeDir, homeDir, homeDir, portFE, portBE, feRoot)
+
+	return os.WriteFile(filepath.Join(homeDir, "nginx.conf"), []byte(content), 0644)
+}
+
 func (g *ConfigGenerator) GenerateNginxSystemdService(systemdDir, appName string) error {
 	if err := os.MkdirAll(systemdDir, 0755); err != nil {
 		return err
@@ -720,6 +810,144 @@ WantedBy=default.target
 	return os.WriteFile(unitPath, []byte(content), 0644)
 }
 
+func (g *ConfigGenerator) GenerateGoDirectRunScript(homeDir, portSingle string) error {
+	content := fmt.Sprintf(`#!/bin/bash
+set -e
+
+# Export environment default
+APP_PORT="${PORT:-%s}"
+export PORT="$APP_PORT"
+export PATH="/usr/local/go/bin:/usr/bin:/bin:$PATH:$HOME/go/bin"
+
+# 1. Fallback Server jika belum ada kode aplikasi Go
+if [ ! -f "app" ] && [ ! -f "main" ] && [ ! -f "server" ] && [ ! -f "bin/app" ] && [ ! -f "bin/main" ] && \
+   [ ! -f "go.mod" ] && [ ! -f "main.go" ] && [ ! -f "server.go" ] && [ ! -f "app.go" ] && \
+   [ ! -f "backend/app" ] && [ ! -f "backend/main" ] && [ ! -f "backend/go.mod" ] && [ ! -f "backend/main.go" ] && \
+   [ ! -f "api/app" ] && [ ! -f "api/main" ] && [ ! -f "api/go.mod" ] && [ ! -f "api/main.go" ]; then
+    echo "[INFO] Go project files not found. Starting placeholder HTTP server on port ${PORT}..."
+    if command -v python3 >/dev/null 2>&1; then
+        exec python3 -c "
+import http.server, socketserver, os
+port = int(os.environ.get('PORT', '${PORT}'))
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.end_headers()
+        self.wfile.write(b'<h1>Go Application Ready</h1><p>Awaiting deployment in user home directory.</p>')
+    def log_message(self, format, *args):
+        pass
+with socketserver.TCPServer(('0.0.0.0', port), Handler) as httpd:
+    httpd.serve_forever()
+"
+    elif command -v node >/dev/null 2>&1; then
+        exec node -e "
+const http = require('http');
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end('<h1>Go Application Ready</h1><p>Awaiting deployment in user home directory.</p>');
+}).listen(process.env.PORT || ${PORT}, '0.0.0.0');
+"
+    elif command -v go >/dev/null 2>&1; then
+        TMP_PH=$(mktemp /tmp/go_placeholder_XXXXXX.go)
+        cat << 'EOF' > "$TMP_PH"
+package main
+import (
+    "fmt"
+    "net/http"
+    "os"
+)
+func main() {
+    port := os.Getenv("PORT")
+    if port == "" { port = "8080" }
+    http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("Content-Type", "text/html; charset=utf-8")
+        fmt.Fprintf(w, "<h1>Go Application Ready</h1><p>Awaiting deployment in user home directory.</p>")
+    })
+    _ = http.ListenAndServe("0.0.0.0:"+port, nil)
+}
+EOF
+        exec go run "$TMP_PH"
+    fi
+fi
+
+# 2. Deteksi lokasi working directory
+if [ -d "backend" ] && ([ -f "backend/app" ] || [ -f "backend/main" ] || [ -f "backend/go.mod" ] || [ -f "backend/main.go" ]); then
+    cd backend
+elif [ -d "api" ] && ([ -f "api/app" ] || [ -f "api/main" ] || [ -f "api/go.mod" ] || [ -f "api/main.go" ]); then
+    cd api
+fi
+
+# 3. Jalankan pre-compiled binary jika ada
+if [ -x "./app" ]; then
+    exec ./app
+elif [ -x "./main" ]; then
+    exec ./main
+elif [ -x "./server" ]; then
+    exec ./server
+elif [ -x "./bin/app" ]; then
+    exec ./bin/app
+elif [ -x "./bin/main" ]; then
+    exec ./bin/main
+fi
+
+# 4. Jika belum ada binary tapi ada source code Go, compile lalu jalankan
+if command -v go >/dev/null 2>&1; then
+    echo "[INFO] Compiling Go application..."
+    if [ -f "main.go" ] || [ -f "go.mod" ]; then
+        go build -o app .
+        exec ./app
+    elif [ -d "cmd" ]; then
+        go build -o app ./cmd/...
+        exec ./app
+    fi
+fi
+
+echo "[ERROR] No valid Go binary or source files found."
+exit 1
+`, portSingle)
+
+	runScriptPath := filepath.Join(homeDir, "run.sh")
+	if err := os.WriteFile(runScriptPath, []byte(content), 0755); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (g *ConfigGenerator) GenerateGoDirectSystemdService(systemdDir, appName, portSingle string) error {
+	if err := os.MkdirAll(systemdDir, 0755); err != nil {
+		return err
+	}
+
+	content := fmt.Sprintf(`[Unit]
+Description=Go App (Direct Runtime) - %%u
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%%h
+ExecStart=%%h/run.sh
+Restart=always
+RestartSec=5s
+
+# Alokasi environment
+Environment=PORT=%s
+Environment=GIN_MODE=release
+Environment=PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin:%%h/go/bin
+Environment=GOCACHE=%%h/.cache/go-build
+Environment=GOPATH=%%h/go
+
+# Membaca .env milik user jika tersedia
+EnvironmentFile=-%%h/.env
+
+[Install]
+WantedBy=default.target
+`, portSingle)
+
+	unitPath := filepath.Join(systemdDir, fmt.Sprintf("%s.service", appName))
+	return os.WriteFile(unitPath, []byte(content), 0644)
+}
+
 func (g *ConfigGenerator) CreatePlaceholders(homeDir string, stack domain.StackType, appName string, portBE string) error {
 	switch stack {
 	case domain.StackLaravel:
@@ -824,6 +1052,29 @@ func (g *ConfigGenerator) CreatePlaceholders(homeDir string, stack domain.StackT
 `, appName, appName)
 			_ = os.WriteFile(indexPath, []byte(content), 0644)
 		}
+	case domain.StackGoAPI:
+		_ = g.GenerateGoDirectRunScript(homeDir, portBE)
+	case domain.StackNodeGo:
+		// FE placeholder: fe/dist/index.html
+		feDistDir := filepath.Join(homeDir, "fe", "dist")
+		_ = os.MkdirAll(feDistDir, 0755)
+		feIndexPath := filepath.Join(feDistDir, "index.html")
+		if _, err := os.Stat(feIndexPath); os.IsNotExist(err) {
+			content := fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head><title>%s</title></head>
+<body>
+<h1>Aplikasi Node.js FE (%s) Siap</h1>
+<p>Frontend Static. API Go tersedia di <code>/api/*</code> pada port %s.</p>
+</body>
+</html>
+`, appName, appName, portBE)
+			_ = os.WriteFile(feIndexPath, []byte(content), 0644)
+		}
+		// BE placeholder: be/run.sh
+		beDir := filepath.Join(homeDir, "be")
+		_ = os.MkdirAll(beDir, 0755)
+		_ = g.GenerateGoDirectRunScript(beDir, portBE)
 	}
 	return nil
 }

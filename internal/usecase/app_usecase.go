@@ -267,6 +267,40 @@ func (u *AppUsecase) Create(dto *domain.CreateAppDTO) (*domain.App, error) {
 			dto.WebServer = domain.WebServerCaddy
 		}
 
+	case domain.StackGoAPI:
+		stackName = "Go (Standalone API Only - Direct Go Runtime)"
+		if dto.PortSingle == "" {
+			dto.PortSingle = "8080"
+		}
+		if err := u.validatePort(dto.PortSingle); err != nil {
+			return nil, err
+		}
+		portSingle = dto.PortSingle
+		dto.WebServer = domain.WebServerNone
+
+	case domain.StackNodeGo:
+		stackName = "Node.js FE + Go BE (Reverse Proxy)"
+		if dto.PortFE == "" {
+			dto.PortFE = "8080"
+		}
+		if dto.PortBE == "" {
+			dto.PortBE = "8002"
+		}
+		if err := u.validatePort(dto.PortFE); err != nil {
+			return nil, err
+		}
+		if err := u.validatePort(dto.PortBE); err != nil {
+			return nil, err
+		}
+		if dto.PortFE == dto.PortBE {
+			return nil, domain.ErrPortConflict
+		}
+		portFE = dto.PortFE
+		portBE = dto.PortBE
+		if dto.WebServer == "" {
+			dto.WebServer = domain.WebServerCaddy
+		}
+
 	default:
 		return nil, domain.ErrInvalidStack
 	}
@@ -393,6 +427,23 @@ func (u *AppUsecase) Create(dto *domain.CreateAppDTO) (*domain.App, error) {
 			_ = u.webGen.GenerateNodeFrontendNginxConfig(homeDir, portFE)
 			_ = u.webGen.GenerateNginxSystemdService(systemdUserDir, dto.Name)
 		}
+	} else if dto.Stack == domain.StackGoAPI {
+		logger.Info("Membuat service direct Go runtime dan run.sh...")
+		_ = u.webGen.GenerateGoDirectRunScript(homeDir, portSingle)
+		_ = u.webGen.GenerateGoDirectSystemdService(systemdUserDir, dto.Name, portSingle)
+	} else if dto.Stack == domain.StackNodeGo {
+		if dto.WebServer == domain.WebServerCaddy {
+			logger.Info("Membuat konfigurasi Caddyfile (Node.js FE + Go BE)...")
+			_ = u.webGen.GenerateNodeGoCaddyfile(homeDir, portFE, portBE)
+			_ = u.webGen.GenerateCaddySystemdService(systemdUserDir, dto.Name)
+		} else if dto.WebServer == domain.WebServerNginx {
+			logger.Info("Membuat direktori temporary Nginx dan file nginx.conf (Node.js FE + Go BE)...")
+			_ = u.webGen.GenerateNodeGoNginxConfig(homeDir, portFE, portBE)
+			_ = u.webGen.GenerateNginxSystemdService(systemdUserDir, dto.Name)
+		}
+		beDir := filepath.Join(homeDir, "be")
+		_ = os.MkdirAll(beDir, 0755)
+		_ = u.webGen.GenerateGoDirectRunScript(beDir, portBE)
 	}
 
 	// 8. Perbaiki Kepemilikan & Izin File
@@ -542,6 +593,18 @@ func (u *AppUsecase) List() ([]domain.AppStatusInfo, error) {
 				displayPort = a.PortFE
 			} else {
 				displayPort = valueOrDefault(a.Port, "-")
+			}
+		} else if a.Stack == domain.StackGoAPI {
+			if a.Port != "N/A" && a.Port != "" {
+				displayPort = a.Port
+			} else {
+				displayPort = "-"
+			}
+		} else if a.Stack == domain.StackNodeGo {
+			if a.PortFE != "N/A" && a.PortFE != "" {
+				displayPort = fmt.Sprintf("%s (FE) | %s (BE)", a.PortFE, a.PortBE)
+			} else {
+				displayPort = "-"
 			}
 		} else {
 			if a.Port != "N/A" && a.Port != "" {

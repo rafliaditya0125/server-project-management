@@ -158,6 +158,18 @@ func (m *mockWebGen) GenerateNodeFrontendCaddyfile(h, fe string) error {
 func (m *mockWebGen) GenerateNodeFrontendNginxConfig(h, fe string) error {
 	return nil
 }
+func (m *mockWebGen) GenerateGoDirectRunScript(h, p string) error {
+	return nil
+}
+func (m *mockWebGen) GenerateGoDirectSystemdService(s, a, p string) error {
+	return nil
+}
+func (m *mockWebGen) GenerateNodeGoCaddyfile(h, fe, be string) error {
+	return nil
+}
+func (m *mockWebGen) GenerateNodeGoNginxConfig(h, fe, be string) error {
+	return nil
+}
 func (m *mockWebGen) CreatePlaceholders(h string, s domain.StackType, a, p string) error {
 	return nil
 }
@@ -189,6 +201,9 @@ func (m *mockPkgInstaller) InstallNodeAndNPM(o string) error {
 	return nil
 }
 func (m *mockPkgInstaller) InstallPythonAndPip(o string) error {
+	return nil
+}
+func (m *mockPkgInstaller) InstallGo(o string) error {
 	return nil
 }
 func (m *mockPkgInstaller) InstallWebServers(o string) error {

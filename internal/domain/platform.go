@@ -51,6 +51,11 @@ type WebServerConfigGenerator interface {
 	GenerateNodeFrontendCaddyfile(homeDir, portFE string) error
 	GenerateNodeFrontendNginxConfig(homeDir, portFE string) error
 
+	GenerateGoDirectRunScript(homeDir, portSingle string) error
+	GenerateGoDirectSystemdService(systemdDir, appName, portSingle string) error
+	GenerateNodeGoCaddyfile(homeDir, portFE, portBE string) error
+	GenerateNodeGoNginxConfig(homeDir, portFE, portBE string) error
+
 	CreatePlaceholders(homeDir string, stack StackType, appName string, portBE string) error
 	GetCaddyPath() string
 	GetNginxPath() string
@@ -61,6 +66,7 @@ type PackageManager interface {
 	InstallPHPAndComposer(osDistro string) error
 	InstallNodeAndNPM(osDistro string) error
 	InstallPythonAndPip(osDistro string) error
+	InstallGo(osDistro string) error
 	InstallWebServers(osDistro string) error
 	InstallShellAndDBClient(osDistro string) error
 	DetectPhpFpmSocket() string
